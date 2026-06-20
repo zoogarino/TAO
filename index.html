@@ -1,0 +1,1445 @@
+<div id="tao-tabbar-outer" style="width:100%; max-width:880px; margin:0 auto 12px; font-family: 'Inter', -apple-system, system-ui, sans-serif;">
+  <div style="display:flex; gap:6px;">
+    <div id="tao-tab-alloc" style="padding:8px 16px; font-size:13px; font-weight:500; border-radius:7px; cursor:pointer; background:#1C1F24; color:#EDEAE3; border:1px solid #C8893B;">Allocation terminal</div>
+    <div id="tao-tab-screener" style="padding:8px 16px; font-size:13px; font-weight:500; border-radius:7px; cursor:pointer; background:transparent; color:#8C8A84; border:1px solid #2A2D33;">Subnet screener</div>
+  </div>
+</div>
+<script>
+(function() {
+  function showPane(which) {
+    document.getElementById('tao-pane-alloc').style.display = (which === 'alloc') ? 'block' : 'none';
+    document.getElementById('tao-pane-screener').style.display = (which === 'screener') ? 'block' : 'none';
+    const tabAlloc = document.getElementById('tao-tab-alloc');
+    const tabScreener = document.getElementById('tao-tab-screener');
+    if (which === 'alloc') {
+      tabAlloc.style.background = '#1C1F24'; tabAlloc.style.color = '#EDEAE3'; tabAlloc.style.borderColor = '#C8893B';
+      tabScreener.style.background = 'transparent'; tabScreener.style.color = '#8C8A84'; tabScreener.style.borderColor = '#2A2D33';
+    } else {
+      tabScreener.style.background = '#1C1F24'; tabScreener.style.color = '#EDEAE3'; tabScreener.style.borderColor = '#C8893B';
+      tabAlloc.style.background = 'transparent'; tabAlloc.style.color = '#8C8A84'; tabAlloc.style.borderColor = '#2A2D33';
+    }
+  }
+  document.getElementById('tao-tab-alloc').onclick = () => showPane('alloc');
+  document.getElementById('tao-tab-screener').onclick = () => showPane('screener');
+})();
+</script>
+
+<div id="tao-pane-alloc" style="display:block;">
+<div id="tao-root"></div>
+<style>
+  #tao-root, #tao-root * { box-sizing: border-box; }
+  #tao-root {
+    --bg: #0E0F12;
+    --bg-raised: #16181C;
+    --bg-input: #1C1F24;
+    --line: #2A2D33;
+    --text: #EDEAE3;
+    --text-dim: #8C8A84;
+    --text-faint: #5C5A56;
+    --amber: #C8893B;
+    --amber-soft: #C8893B22;
+    --teal: #4FB3A0;
+    --red: #C75450;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    border-radius: 14px;
+    padding: 0;
+    width: 100%;
+    max-width: 880px;
+    margin: 0 auto;
+    overflow: hidden;
+    border: 1px solid var(--line);
+  }
+  #tao-root .mono {
+    font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  }
+
+  /* ---- header ---- */
+  .tao-header {
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .tao-brand {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .tao-brand-mark {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--text-faint);
+    display: inline-block;
+    margin-right: 2px;
+    position: relative;
+    top: -1px;
+  }
+  .tao-brand-mark.live { background: var(--teal); box-shadow: 0 0 0 0 var(--teal); animation: tao-pulse 2.2s infinite; }
+  @keyframes tao-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(79,179,160,0.55); }
+    70% { box-shadow: 0 0 0 6px rgba(79,179,160,0); }
+    100% { box-shadow: 0 0 0 0 rgba(79,179,160,0); }
+  }
+  .tao-title { font-size: 15px; font-weight: 600; letter-spacing: 0.02em; }
+  .tao-subtitle { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+  .tao-updated {
+    font-size: 11px;
+    color: var(--text-faint);
+    text-align: right;
+    line-height: 1.5;
+  }
+  .tao-updated b { color: var(--text-dim); font-weight: 500; }
+
+  /* ---- key entry ---- */
+  .tao-keybar {
+    padding: 14px 24px;
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .tao-keybar input {
+    flex: 1;
+    min-width: 200px;
+    background: var(--bg-input);
+    border: 1px solid var(--line);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 9px 11px;
+    border-radius: 7px;
+    outline: none;
+  }
+  .tao-keybar input::placeholder { color: var(--text-faint); }
+  .tao-keybar input:focus { border-color: var(--amber); }
+  .tao-btn {
+    background: var(--amber);
+    color: #1A1305;
+    border: none;
+    font-family: 'Inter', sans-serif;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 9px 16px;
+    border-radius: 7px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .tao-btn:hover { filter: brightness(1.08); }
+  .tao-btn.secondary {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+  }
+  .tao-btn.secondary:hover { border-color: var(--text-dim); color: var(--text); }
+  .tao-keynote { font-size: 11px; color: var(--text-faint); width: 100%; margin-top: 6px; }
+
+  /* ---- hero stat row ---- */
+  .tao-hero {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1fr 1fr;
+    border-bottom: 1px solid var(--line);
+  }
+  .tao-hero-cell {
+    padding: 18px 24px;
+    border-right: 1px solid var(--line);
+  }
+  .tao-hero-cell:last-child { border-right: none; }
+  .tao-hero-label {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+    margin-bottom: 8px;
+  }
+  .tao-hero-value {
+    font-size: 26px;
+    font-weight: 500;
+    line-height: 1;
+    color: #FFFFFF;
+  }
+  .tao-hero-cell.price .tao-hero-value { color: var(--amber); font-size: 30px; }
+  .tao-delta { font-size: 12.5px; margin-top: 6px; }
+  .tao-delta.up { color: var(--teal); }
+  .tao-delta.down { color: var(--red); }
+  .tao-hero-sub { font-size: 11px; color: var(--text-dim); margin-top: 6px; }
+
+  /* ---- section label ---- */
+  .tao-section-label {
+    padding: 16px 24px 10px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .tao-section-label .tao-add {
+    font-size: 11px;
+    color: var(--amber);
+    cursor: pointer;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  /* ---- watchlist table ---- */
+  .tao-table-wrap { padding: 0 24px 8px; overflow-x: auto; }
+  table.tao-table { width: 100%; border-collapse: collapse; min-width: 880px; }
+  table.tao-table th {
+    text-align: left;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-faint);
+    font-weight: 500;
+    padding: 6px 7px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  table.tao-table th.num, table.tao-table td.num { text-align: right; }
+  table.tao-table td {
+    padding: 9px 7px;
+    font-size: 12.5px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+    white-space: nowrap;
+    color: #FFFFFF;
+  }
+  table.tao-table tr:last-child td { border-bottom: none; }
+  .tao-sn-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    background: var(--bg-input);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-right: 8px;
+  }
+  .tao-sn-name { font-weight: 500; }
+  .tao-sn-remove {
+    color: var(--text-faint);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+  }
+  .tao-sn-remove:hover { color: var(--red); }
+  .tao-sn-sync {
+    color: var(--text-faint);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+    display: inline-block;
+  }
+  .tao-sn-sync:hover { color: var(--amber); }
+  .tao-empty-row td {
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 12.5px;
+    padding: 22px 8px;
+  }
+  .tao-rev-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(79,179,160,0.12);
+    color: var(--teal);
+    margin-left: 8px;
+  }
+  .tao-rev-meta {
+    font-size: 9.5px;
+    color: var(--text-faint);
+    margin-top: 2px;
+    white-space: nowrap;
+  }
+
+  /* ---- add subnet inline form ---- */
+  .tao-add-row {
+    display: none;
+    gap: 8px;
+    padding: 10px 24px 4px;
+  }
+  .tao-add-row.open { display: flex; }
+  .tao-add-row input {
+    background: var(--bg-input);
+    border: 1px solid var(--line);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    outline: none;
+    width: 90px;
+  }
+  .tao-add-row input:focus { border-color: var(--amber); }
+
+  /* ---- allocation panel ---- */
+  .tao-alloc {
+    padding: 16px 24px 22px;
+    border-top: 1px solid var(--line);
+  }
+  .tao-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .tao-split-card {
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 13px 14px;
+  }
+  .tao-split-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); margin-bottom: 6px; }
+  .tao-split-value { font-family: 'JetBrains Mono', monospace; font-size: 18px; color: #FFFFFF; }
+  .tao-split-pct { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+
+  /* ---- footer note ---- */
+  .tao-footnote {
+    padding: 12px 24px 18px;
+    font-size: 11px;
+    color: var(--text-faint);
+    border-top: 1px solid var(--line);
+    line-height: 1.6;
+  }
+  .tao-footnote a { color: var(--text-dim); }
+
+  @media (max-width: 560px) {
+    .tao-hero { grid-template-columns: 1fr 1fr; }
+    .tao-hero-cell { border-bottom: 1px solid var(--line); }
+    .tao-split { grid-template-columns: 1fr; }
+  }
+</style>
+
+<script>
+(function() {
+  const root = document.getElementById('tao-root');
+
+  const DEFAULT_WATCHLIST = [
+    { netuid: 64, label: 'Chutes', tag: 'verified-rev' },
+    { netuid: 4,  label: 'Targon', tag: 'self-reported' },
+    { netuid: 51, label: 'lium.io', tag: 'self-reported' },
+    { netuid: 8,  label: 'Vanta', tag: 'self-reported' },
+  ];
+
+  // Static, manually-curated revenue reference. Not live — this is qualitative
+  // diligence that taostats does not track, sourced from SubnetRadar and public
+  // reporting. Refresh by hand periodically; "checked" shows when it was last verified.
+  const REVENUE_REFERENCE = {
+    64:  { rev90d: 1440000, window: '90d', verified: 'TI Verified',   checked: '2026-06-20', note: 'Settlement-grade on-chain ledger' },
+    4:   { rev90d: 100000,  window: '90d', verified: 'Self-reported', checked: '2026-06-20', note: 'April 2026 revenue' },
+    51:  { rev90d: 530000,  window: '90d', verified: 'Self-reported', checked: '2026-06-20', note: 'Jan\u2013Apr 2026' },
+    8:   { rev90d: 100000,  window: '90d', verified: 'Self-reported', checked: '2026-06-20', note: 'MRR, March 2026' },
+    93:  { rev90d: 160000,  window: '90d', verified: 'TI Verified',   checked: '2026-06-20', note: 'Total revenue, April 2026' },
+    121: { rev90d: 32000,   window: '90d', verified: 'TI Verified',   checked: '2026-06-20', note: 'Commercial contract, March 2026' },
+    22:  { rev90d: 11000,   window: '90d', verified: 'Self-reported', checked: '2026-06-20', note: 'MRR, October 2025' },
+  };
+
+  // Persistence: watchlist and wallet address survive closing/reopening this
+  // file via localStorage, scoped to this browser. The API key is
+  // deliberately NEVER persisted — it stays session-only in memory, same
+  // as always, so closing the tab still clears it.
+  const STORAGE_KEY = 'tao_dashboard_v1';
+
+  function loadPersisted() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      return parsed;
+    } catch (e) {
+      // Corrupted data, private-browsing restrictions, or localStorage
+      // unavailable entirely — fall back to defaults rather than break.
+      return null;
+    }
+  }
+
+  function savePersisted() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        watchlist: state.watchlist,
+        walletAddress: state.walletAddress || '',
+      }));
+    } catch (e) {
+      // Storage full, disabled, or unavailable — fail silently, nothing
+      // breaks, it just won't persist this time.
+    }
+  }
+
+  const persisted = loadPersisted();
+
+  let state = {
+    apiKey: '',
+    watchlist: (persisted && Array.isArray(persisted.watchlist) && persisted.watchlist.length > 0)
+      ? persisted.watchlist
+      : JSON.parse(JSON.stringify(DEFAULT_WATCHLIST)),
+    taoPrice: null,
+    taoChange24h: null,
+    marketCap: null,
+    volume24h: null,
+    subnetData: {},   // netuid -> { price, marketCapUsd, change24h, name }
+    lastUpdated: null,
+    loading: false,
+    error: null,
+    rawDebug: {},
+    showDebug: false,
+    addRowOpen: false,
+    addRowError: null,
+    rowSyncing: null, // netuid currently being individually fetched, or null
+    walletAddress: (persisted && persisted.walletAddress) || '',
+    walletHoldings: null,
+    walletFreeTao: null,
+    walletLoading: false,
+    walletError: null,
+  };
+
+  function firstNum() {
+    for (let i = 0; i < arguments.length; i++) {
+      const v = arguments[i];
+      if (v !== undefined && v !== null && v !== '' && !isNaN(parseFloat(v))) return parseFloat(v);
+    }
+    return null;
+  }
+
+  function fmtUsd(n, decimals) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    if (decimals === undefined) decimals = n < 1000 ? 2 : 0;
+    return '$' + Number(n).toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals === 2 ? 2 : 0 });
+  }
+  function fmtCompactUsd(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    const abs = Math.abs(n);
+    if (abs >= 1e9) return '$' + (n/1e9).toFixed(2) + 'B';
+    if (abs >= 1e6) return '$' + (n/1e6).toFixed(2) + 'M';
+    if (abs >= 1e3) return '$' + (n/1e3).toFixed(1) + 'K';
+    return '$' + n.toFixed(2);
+  }
+  function fmtPct(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    const sign = n > 0 ? '+' : '';
+    return sign + n.toFixed(2) + '%';
+  }
+  function sparklineSvg(prices, isUp) {
+    if (!prices || prices.length < 2) return '<span style="color:var(--text-faint); font-size:11px;">no data</span>';
+    const w = 64, h = 24, pad = 2;
+    const min = Math.min.apply(null, prices);
+    const max = Math.max.apply(null, prices);
+    const range = (max - min) || 1;
+    const stroke = isUp ? 'var(--teal)' : (isUp === false ? 'var(--red)' : 'var(--text-dim)');
+    const pts = prices.map((p, i) => {
+      const x = pad + (i / (prices.length - 1)) * (w - pad * 2);
+      const y = pad + (1 - (p - min) / range) * (h - pad * 2);
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" style="display:block;">' +
+      '<polyline points="' + pts + '" fill="none" stroke="' + stroke + '" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" />' +
+      '</svg>';
+  }
+  function timeAgo(ts) {
+    if (!ts) return 'never';
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 5) return 'just now';
+    if (s < 60) return s + 's ago';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm ago';
+    const h = Math.floor(m / 60);
+    return h + 'h ago';
+  }
+
+  async function fetchTaoStats(path) {
+    const res = await fetch('https://api.taostats.io' + path, {
+      headers: { 'Authorization': state.apiKey, 'accept': 'application/json' }
+    });
+    if (!res.ok) {
+      let bodyText = '';
+      try { bodyText = await res.text(); } catch (e) { /* ignore */ }
+      const err = new Error('Request failed (' + res.status + ')' + (bodyText ? ': ' + bodyText.slice(0, 300) : ''));
+      err.status = res.status;
+      err.body = bodyText;
+      throw err;
+    }
+    return res.json();
+  }
+
+  async function lookupWallet() {
+    if (!state.apiKey) {
+      state.walletError = 'Add your taostats API key above first.';
+      render();
+      return;
+    }
+    const addr = (document.getElementById('tao-wallet-input') || {}).value || state.walletAddress;
+    if (!addr || addr.trim().length < 10) {
+      state.walletError = 'Enter a valid public coldkey address (SS58 format).';
+      render();
+      return;
+    }
+    state.walletAddress = addr.trim();
+    savePersisted();
+    state.walletLoading = true;
+    state.walletError = null;
+    render();
+
+    try {
+      // Confirmed endpoint shape from taostats docs: returns per-hotkey,
+      // per-subnet stake balances for a coldkey. balance = alpha as RAO,
+      // balance_as_tao = TAO-equivalent value as RAO. Field names here are
+      // from docs, not tested live — falls back to a clear error if wrong
+      // rather than showing fabricated numbers.
+      const data = await fetchTaoStats('/api/dtao/stake_balance/latest/v1?coldkey=' + encodeURIComponent(state.walletAddress));
+      const rows = (data && data.data) || [];
+      if (!Array.isArray(rows) || rows.length === 0) {
+        state.walletError = 'No holdings found for this address, or the lookup format needs adjusting — try "show raw response" below to check the API reply.';
+        state.walletHoldings = [];
+        state.rawDebug.wallet = data;
+      } else {
+        state.walletHoldings = rows.map(r => ({
+          netuid: r.netuid,
+          hotkeyName: r.hotkey_name || null,
+          alphaBalance: r.balance !== undefined ? parseFloat(r.balance) / 1e9 : null,
+          balanceAsTao: r.balance_as_tao !== undefined ? parseFloat(r.balance_as_tao) / 1e9 : null,
+        }));
+        state.rawDebug.wallet = { sample: rows.slice(0, 2), total_rows: rows.length };
+      }
+    } catch (e) {
+      state.walletError = e.message || 'Could not look up this address.';
+      state.rawDebug.wallet = {
+        error: e.message,
+        status: e.status || null,
+        body: e.body || null,
+        endpoint_tried: '/api/dtao/stake_balance/latest/v1?coldkey=' + state.walletAddress,
+      };
+    }
+
+    // Separate, independent attempt at the free/account balance — taostats'
+    // own "Accounts" view shows free + delegated = total, so there's a
+    // dedicated account-balance endpoint distinct from the stake endpoint
+    // above. Endpoint path/field names are a best guess from docs, not
+    // tested live — isolated in its own try/catch so a wrong guess here
+    // can't break the stake-balance results we already know work.
+    try {
+      const acctData = await fetchTaoStats('/api/account/latest/v1?address=' + encodeURIComponent(state.walletAddress));
+      const acctRow = (acctData && acctData.data && acctData.data[0]) || null;
+      if (acctRow) {
+        state.walletFreeTao = firstNum(acctRow.balance_free, acctRow.free, acctRow.balance) !== null
+          ? firstNum(acctRow.balance_free, acctRow.free, acctRow.balance) / 1e9
+          : null;
+        state.rawDebug.walletAccount = { sample: acctRow };
+      } else {
+        state.walletFreeTao = null;
+        state.rawDebug.walletAccount = { note: 'No account row returned', raw: acctData };
+      }
+    } catch (e) {
+      state.walletFreeTao = null;
+      state.rawDebug.walletAccount = {
+        error: e.message,
+        status: e.status || null,
+        body: e.body || null,
+        endpoint_tried: '/api/account/latest/v1?address=' + state.walletAddress,
+      };
+    }
+    state.walletLoading = false;
+    render();
+  }
+
+  function applySettledPoolResult(netuid, r, taoPrice) {
+    if (r.status === 'fulfilled') {
+      const rows = (r.value && r.value.data) || [];
+      if (rows.length === 0) {
+        state.subnetData[netuid] = { error: true, reason: 'no_data', detail: 'API returned an empty result for netuid ' + netuid + ' — this subnet may not exist or has no active pool data.' };
+        state.rawDebug['sn' + netuid] = r.value;
+      } else {
+        state.rawDebug['sn' + netuid] = r.value;
+        const d = rows[0];
+        const priceTao = firstNum(d.price);
+        const marketCapTao = d.market_cap !== undefined ? firstNum(d.market_cap) / 1e9 : null;
+        const liquidityTao = d.liquidity !== undefined ? firstNum(d.liquidity) / 1e9 : null;
+        state.subnetData[netuid] = {
+          priceTao: priceTao,
+          priceUsd: (taoPrice && priceTao !== null) ? taoPrice * priceTao : null,
+          marketCapUsd: (taoPrice && marketCapTao !== null) ? taoPrice * marketCapTao : null,
+          liquidityUsd: (taoPrice && liquidityTao !== null) ? taoPrice * liquidityTao : null,
+          change24h: firstNum(d.price_change_1_day),
+          change1w: firstNum(d.price_change_1_week),
+          sparkline: Array.isArray(d.seven_day_prices) ? d.seven_day_prices.map(pt => parseFloat(pt.price)) : [],
+        };
+      }
+    } else {
+      state.subnetData[netuid] = { error: true, reason: 'fetch_failed', detail: (r.reason && r.reason.message) || 'Unknown error' };
+      state.rawDebug['sn' + netuid] = { fetch_error: (r.reason && r.reason.message) || String(r.reason), status: (r.reason && r.reason.status) || null };
+    }
+  }
+
+  async function fetchSingleSubnet(netuid) {
+    // Used both when adding a subnet, and via the per-row sync button —
+    // fetches only this one subnet's pool data (1 API call) instead of
+    // re-fetching the whole watchlist. Matters on the free tier's
+    // 5-calls/minute limit, especially with long watchlists where a full
+    // sync would fire every row at once and let the rate limit decide
+    // arbitrarily which ones land.
+    if (!state.apiKey) {
+      state.error = 'Add your taostats API key above first.';
+      render();
+      return;
+    }
+    state.rowSyncing = netuid;
+    render();
+    try {
+      const settled = await Promise.allSettled([fetchTaoStats('/api/dtao/pool/latest/v1?netuid=' + netuid)]);
+      applySettledPoolResult(netuid, settled[0], state.taoPrice);
+    } catch (e) {
+      state.subnetData[netuid] = { error: true, reason: 'fetch_failed', detail: e.message || 'Unknown error' };
+    }
+    state.rowSyncing = null;
+    state.lastUpdated = Date.now();
+    render();
+  }
+
+  async function refreshData() {
+    if (!state.apiKey) {
+      state.error = 'Add your taostats API key above to load live data.';
+      render();
+      return;
+    }
+    state.loading = true;
+    state.error = null;
+    render();
+
+    try {
+      // TAO price — field names confirmed less rigorously than the pool endpoint,
+      // so fall back across a few plausible variants rather than silently showing nothing.
+      const priceData = await fetchTaoStats('/api/price/latest/v1?asset=tao');
+      state.rawDebug.price = priceData;
+      const p = (priceData && priceData.data && priceData.data[0]) || {};
+      state.taoPrice = firstNum(p.price, p.price_usd, p.usd);
+      state.taoChange24h = firstNum(p.percent_change_24h, p.price_change_1_day, p.change_24h);
+      state.marketCap = firstNum(p.market_cap, p.market_cap_usd);
+      state.volume24h = firstNum(p.volume_24h, p.tao_volume_24_hr, p.volume_24_hr);
+      // market_cap on this endpoint may also be RAO-denominated like the pool endpoint —
+      // if the raw value is implausibly small to be a USD market cap, assume RAO and convert.
+      if (state.marketCap !== null && state.marketCap < 1e6 && state.taoPrice) {
+        state.marketCap = state.marketCap; // already TAO-unit scale unlikely here, leave as-is
+      } else if (state.marketCap !== null && state.marketCap > 1e14) {
+        state.marketCap = (state.marketCap / 1e9) * state.taoPrice;
+      }
+
+      // Subnet pools, one call per tracked subnet
+      // Real taostats /api/dtao/pool/latest/v1 field shapes (confirmed via live response):
+      //   price              -> Alpha price denominated in TAO (e.g. 0.0646)
+      //   market_cap         -> RAO units (1 TAO = 1e9 RAO), needs /1e9 then *TAO_USD for USD value
+      //   liquidity          -> RAO units, same conversion
+      //   price_change_1_day -> plain percent number already (e.g. -0.24 means -0.24%)
+      //   seven_day_prices   -> array of { timestamp, price } in TAO, ~4hr spacing, for sparkline
+      const results = await Promise.allSettled(
+        state.watchlist.map(s => fetchTaoStats('/api/dtao/pool/latest/v1?netuid=' + s.netuid))
+      );
+      results.forEach((r, i) => {
+        applySettledPoolResult(state.watchlist[i].netuid, r, state.taoPrice);
+      });
+
+
+      state.lastUpdated = Date.now();
+    } catch (e) {
+      state.error = e.message || 'Could not reach taostats. Check your API key.';
+    }
+    state.loading = false;
+    render();
+  }
+
+  function addSubnet(rawNetuid, label) {
+    const netuid = parseInt(rawNetuid, 10);
+    if (!netuid || netuid < 1) {
+      state.addRowError = 'Enter a valid subnet number (e.g. 8).';
+      return false;
+    }
+    if (state.watchlist.find(s => s.netuid === netuid)) {
+      state.addRowError = 'SN' + netuid + ' is already in your watchlist.';
+      return false;
+    }
+    state.watchlist.push({ netuid, label: label || ('SN' + netuid), tag: 'manual' });
+    state.addRowError = null;
+    savePersisted();
+    render();
+    if (state.taoPrice) {
+      // Already have a TAO price from a prior sync — just fetch this one
+      // subnet (1 call) rather than re-fetching the whole watchlist.
+      fetchSingleSubnet(netuid);
+    } else {
+      // No prior sync yet at all, so there's no TAO price to convert with —
+      // a full refresh is unavoidable the very first time.
+      refreshData();
+    }
+    return true;
+  }
+  function removeSubnet(netuid) {
+    state.watchlist = state.watchlist.filter(s => s.netuid !== netuid);
+    delete state.subnetData[netuid];
+    savePersisted();
+    render();
+  }
+
+  function render() {
+    const taoDeltaClass = state.taoChange24h > 0 ? 'up' : (state.taoChange24h < 0 ? 'down' : '');
+
+    root.innerHTML = `
+      <div class="tao-header">
+        <div>
+          <div class="tao-brand">
+            <span class="tao-brand-mark ${state.apiKey ? 'live' : ''}"></span>
+            <span class="tao-title">TAO Allocation Terminal</span>
+          </div>
+          <div class="tao-subtitle">Personal Bittensor watchlist &amp; sizing tool</div>
+        </div>
+        <div class="tao-updated">
+          <div>Last synced</div>
+          <div><b>${timeAgo(state.lastUpdated)}</b></div>
+        </div>
+      </div>
+
+      <div class="tao-keybar">
+        <input id="tao-key-input" type="password" placeholder="Paste your taostats API key (stays in this browser only)" value="${state.apiKey ? state.apiKey : ''}" />
+        <button class="tao-btn" id="tao-connect-btn">${state.loading ? 'Syncing…' : 'Sync now'}</button>
+        <button class="tao-btn secondary" id="tao-clear-btn">Clear key</button>
+        <div class="tao-keynote">${state.error ? '⚠ ' + state.error : 'Key is stored only in this page\'s memory for this session — never sent anywhere but api.taostats.io.'}</div>
+      </div>
+
+      <div class="tao-keybar" style="border-top: 1px solid var(--line);">
+        <input id="tao-wallet-input" type="text" placeholder="Paste your public coldkey address (SS58) to see real holdings \u2014 never your seed phrase or private key" value="${state.walletAddress || ''}" />
+        <button class="tao-btn secondary" id="tao-wallet-sync-btn">${state.walletLoading ? 'Looking up\u2026' : 'Look up wallet'}</button>
+        ${state.walletAddress ? '<button class="tao-btn secondary" id="tao-wallet-clear-btn">Clear</button>' : ''}
+        <div class="tao-keynote">${state.walletError ? '⚠ ' + state.walletError : 'Public address only \u2014 this is read-only lookup, never enter a seed phrase or private key anywhere.'}</div>
+      </div>
+
+      ${(state.walletHoldings && state.walletHoldings.length > 0) || state.walletFreeTao !== null ? `
+        <div class="tao-section-label"><span>Your holdings</span></div>
+        <div class="tao-table-wrap">
+          <table class="tao-table">
+            <thead>
+              <tr>
+                <th>Subnet</th>
+                <th class="num">Alpha balance</th>
+                <th class="num">Value (\u03c4 TAO)</th>
+                <th class="num">Value (USD)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${state.walletFreeTao !== null ? `
+                <tr>
+                  <td><span class="tao-sn-tag">Free</span>Liquid TAO (unstaked)</td>
+                  <td class="num mono">—</td>
+                  <td class="num mono">${state.walletFreeTao.toFixed(4)} \u03c4</td>
+                  <td class="num mono">${state.taoPrice ? fmtUsd(state.walletFreeTao * state.taoPrice, 2) : '—'}</td>
+                </tr>
+              ` : ''}
+              ${(state.walletHoldings || []).map(h => `
+                <tr>
+                  <td><span class="tao-sn-tag">SN${h.netuid}</span>${h.hotkeyName || ('SN' + h.netuid)}</td>
+                  <td class="num mono">${h.alphaBalance !== null ? h.alphaBalance.toFixed(4) : '—'}</td>
+                  <td class="num mono">${h.balanceAsTao !== null ? h.balanceAsTao.toFixed(4) + ' \u03c4' : '—'}</td>
+                  <td class="num mono">${(h.balanceAsTao !== null && state.taoPrice) ? fmtUsd(h.balanceAsTao * state.taoPrice, 2) : '—'}</td>
+                </tr>
+              `).join('')}
+              <tr style="border-top: 1px solid var(--line);">
+                <td style="font-weight:600;">Total (free + staked)</td>
+                <td></td>
+                <td class="num mono" style="font-weight:600;">${((state.walletFreeTao || 0) + (state.walletHoldings || []).reduce((s, h) => s + (h.balanceAsTao || 0), 0)).toFixed(4)} \u03c4</td>
+                <td class="num mono" style="font-weight:600;">${state.taoPrice ? fmtUsd(((state.walletFreeTao || 0) + (state.walletHoldings || []).reduce((s, h) => s + (h.balanceAsTao || 0), 0)) * state.taoPrice, 2) : '—'}</td>
+              </tr>
+            </tbody>
+          </table>
+          ${state.walletFreeTao === null ? '<div class="tao-keynote" style="padding:8px 0 4px;">Free (unstaked) TAO balance could not be loaded this lookup \u2014 the total above only reflects staked Alpha positions. Check "show raw response" for details.</div>' : ''}
+        </div>
+      ` : ''}
+
+      <div class="tao-hero">
+        <div class="tao-hero-cell price">
+          <div class="tao-hero-label">TAO / USD</div>
+          <div class="tao-hero-value mono">${state.taoPrice ? fmtUsd(state.taoPrice, 2) : '—'}</div>
+          <div class="tao-delta ${taoDeltaClass}">${fmtPct(state.taoChange24h)} · 24h</div>
+        </div>
+        <div class="tao-hero-cell">
+          <div class="tao-hero-label">Market Cap</div>
+          <div class="tao-hero-value mono" style="font-size:20px">${fmtCompactUsd(state.marketCap)}</div>
+          <div class="tao-hero-sub">circulating supply</div>
+        </div>
+        <div class="tao-hero-cell">
+          <div class="tao-hero-label">24h Volume</div>
+          <div class="tao-hero-value mono" style="font-size:20px">${fmtCompactUsd(state.volume24h)}</div>
+          <div class="tao-hero-sub">across tracked venues</div>
+        </div>
+        <div class="tao-hero-cell">
+          <div class="tao-hero-label">Tracked Subnets</div>
+          <div class="tao-hero-value mono" style="font-size:20px">${state.watchlist.length}</div>
+          <div class="tao-hero-sub">of 128 active</div>
+        </div>
+      </div>
+
+      <div class="tao-section-label">
+        <span>Subnet watchlist</span>
+        <span class="tao-add" id="tao-add-toggle">+ add subnet</span>
+      </div>
+
+      <div class="tao-add-row ${state.addRowOpen ? 'open' : ''}" id="tao-add-row">
+        <input id="tao-add-netuid" type="text" inputmode="numeric" placeholder="netuid e.g. 8" />
+        <input id="tao-add-label" type="text" placeholder="label e.g. Vanta" />
+        <button class="tao-btn" id="tao-add-confirm">Add</button>
+        ${state.addRowError ? `<div class="tao-keynote" style="width:100%; color:var(--red);">${state.addRowError}</div>` : ''}
+      </div>
+
+      <div class="tao-table-wrap">
+        <table class="tao-table">
+          <thead>
+            <tr>
+              <th>Subnet</th>
+              <th class="num">7d trend</th>
+              <th class="num">Alpha Price</th>
+              <th class="num">Market Cap</th>
+              <th class="num">Liquidity</th>
+              <th class="num">24h</th>
+              <th class="num">Ext. revenue</th>
+              <th class="num">Mkt cap / rev</th>
+              <th class="num">Your position</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.watchlist.length === 0 ? `
+              <tr class="tao-empty-row"><td colspan="10">No subnets tracked yet — add one above.</td></tr>
+            ` : state.watchlist.map(s => {
+                const d = state.subnetData[s.netuid] || {};
+                const rev = REVENUE_REFERENCE[s.netuid];
+                const deltaClass = d.change24h > 0 ? 'up' : (d.change24h < 0 ? 'down' : '');
+                const isUp = d.sparkline && d.sparkline.length > 1 ? d.sparkline[d.sparkline.length - 1] >= d.sparkline[0] : null;
+                const annualizedRev = rev ? rev.rev90d * 4 : null;
+                const multiple = (rev && d.marketCapUsd && annualizedRev) ? (d.marketCapUsd / annualizedRev) : null;
+                // Cross-reference the watchlist against actual wallet holdings —
+                // a subnet being tracked doesn't mean you hold any of it.
+                const holding = (state.walletHoldings || []).find(h => h.netuid === s.netuid);
+                return `
+                  <tr>
+                    <td>
+                      <span class="tao-sn-tag">SN${s.netuid}</span>
+                      <span class="tao-sn-name">${s.label}</span>
+                      ${s.tag === 'verified-rev' ? '<span class="tao-rev-badge">verified rev</span>' : ''}
+                      ${d.error ? `<span class="tao-rev-badge" style="background:rgba(199,84,80,0.12); color:var(--red);" title="${(d.detail || '').replace(/"/g, '&quot;')}">${d.reason === 'no_data' ? 'no pool data' : 'fetch failed'}</span>` : ''}
+                    </td>
+                    <td class="num">${d.error ? '—' : sparklineSvg(d.sparkline, isUp)}</td>
+                    <td class="num mono">${d.error ? '—' : fmtUsd(d.priceUsd)}</td>
+                    <td class="num mono">${d.error ? '—' : fmtCompactUsd(d.marketCapUsd)}</td>
+                    <td class="num mono">${d.error ? '—' : fmtCompactUsd(d.liquidityUsd)}</td>
+                    <td class="num mono ${deltaClass}">${d.error ? '—' : fmtPct(d.change24h)}</td>
+                    <td class="num">
+                      ${rev ? `<span class="mono">${fmtCompactUsd(rev.rev90d)}</span><div class="tao-rev-meta">${rev.window} \u00b7 ${rev.verified}</div>` : '<span style="color:var(--text-faint);">no data</span>'}
+                    </td>
+                    <td class="num mono">${multiple !== null ? multiple.toFixed(0) + '\u00d7' : '—'}</td>
+                    <td class="num mono">${holding && holding.balanceAsTao !== null ? holding.balanceAsTao.toFixed(4) + ' \u03c4' : '<span style="color:var(--text-faint);">not held</span>'}</td>
+                    <td class="num">
+                      <span class="tao-sn-sync" data-sync="${s.netuid}" title="Refresh just this subnet">${state.rowSyncing === s.netuid ? '\u22ef' : '\u21bb'}</span>
+                      <span class="tao-sn-remove" data-remove="${s.netuid}">✕</span>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      ${(state.walletFreeTao !== null || (state.walletHoldings && state.walletHoldings.length > 0)) ? `
+        <div class="tao-section-label"><span>Your portfolio</span></div>
+        <div class="tao-alloc">
+          ${(function() {
+            const free = state.walletFreeTao || 0;
+            const stakedTotal = (state.walletHoldings || []).reduce((s, h) => s + (h.balanceAsTao || 0), 0);
+            const grandTotal = free + stakedTotal;
+            const freePct = grandTotal > 0 ? (free / grandTotal) * 100 : 0;
+            const stakedPct = grandTotal > 0 ? (stakedTotal / grandTotal) * 100 : 0;
+            if (grandTotal <= 0) {
+              return '<div class="tao-keynote">No TAO or Alpha balance found for this address.</div>';
+            }
+            const bySubnet = (state.walletHoldings || [])
+              .filter(h => h.balanceAsTao !== null && h.balanceAsTao > 0)
+              .map(h => ({ ...h, pct: (h.balanceAsTao / grandTotal) * 100 }))
+              .sort((a, b) => b.balanceAsTao - a.balanceAsTao);
+            return `
+              <div class="tao-split">
+                <div class="tao-split-card">
+                  <div class="tao-split-label">Liquid TAO</div>
+                  <div class="tao-split-value">${freePct.toFixed(1)}%</div>
+                  <div class="tao-split-pct">${free.toFixed(4)} \u03c4 \u00b7 unstaked</div>
+                </div>
+                <div class="tao-split-card">
+                  <div class="tao-split-label">Staked (all subnets)</div>
+                  <div class="tao-split-value">${stakedPct.toFixed(1)}%</div>
+                  <div class="tao-split-pct">${stakedTotal.toFixed(4)} \u03c4-equiv \u00b7 ${bySubnet.length} subnet${bySubnet.length === 1 ? '' : 's'}</div>
+                </div>
+                <div class="tao-split-card">
+                  <div class="tao-split-label">Total value</div>
+                  <div class="tao-split-value">${grandTotal.toFixed(4)} \u03c4</div>
+                  <div class="tao-split-pct">${state.taoPrice ? fmtUsd(grandTotal * state.taoPrice, 2) : '—'}</div>
+                </div>
+              </div>
+              ${bySubnet.length > 0 ? `
+                <div style="margin-top:14px;">
+                  ${bySubnet.map(h => `
+                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:7px;">
+                      <span style="width:90px; font-size:12px; color:var(--text-dim); flex-shrink:0;">SN${h.netuid}</span>
+                      <div style="flex:1; background:var(--bg-input); border-radius:4px; height:8px; overflow:hidden;">
+                        <div style="height:100%; width:${h.pct.toFixed(2)}%; background:var(--amber);"></div>
+                      </div>
+                      <span style="width:56px; text-align:right; font-size:12px;" class="mono">${h.pct.toFixed(1)}%</span>
+                    </div>
+                  `).join('')}
+                </div>
+              ` : ''}
+            `;
+          })()}
+        </div>
+      ` : `
+        <div class="tao-section-label"><span>Your portfolio</span></div>
+        <div class="tao-alloc">
+          <div class="tao-keynote">Look up your wallet above to see your actual TAO/Alpha composition here \u2014 this section reflects real holdings, not a hypothetical split.</div>
+        </div>
+      `}
+
+      <div class="tao-footnote">
+        Price, market cap, and liquidity are live via the taostats API. <b style="color:var(--text-dim); font-weight:500;">External revenue figures are not live</b> — they're manually compiled from public reporting and third-party verification (TAO Institute), last checked 2026-06-20, and only exist for subnets with disclosed commercial activity. Most subnets have none yet. The free taostats tier allows roughly 5 requests/minute \u2014 "Sync now" fires every watchlist row at once, so on long watchlists some rows may come back rate-limited. Use the \u21bb next to a row to refresh just that one subnet without re-fetching everything else. Subnet alpha-token markets are thin — treat market caps and 24h moves as directional, not execution-grade prices. This tool is for personal tracking only and is not financial advice.
+        <span style="color:var(--amber); cursor:pointer; margin-left:8px;" id="tao-debug-toggle">${state.showDebug ? 'hide raw response' : 'show raw response'}</span>
+      </div>
+      ${state.showDebug ? `
+        <div style="padding:0 24px 20px; font-size:11px;">
+          <pre class="mono" style="background:var(--bg-input); border:1px solid var(--line); border-radius:8px; padding:12px; max-height:260px; overflow:auto; white-space:pre-wrap; color:var(--text-dim);">${JSON.stringify(state.rawDebug, null, 2).replace(/</g, '&lt;')}</pre>
+        </div>
+      ` : ''}
+    `;
+
+    // wire up events
+    document.getElementById('tao-connect-btn').onclick = () => {
+      const v = document.getElementById('tao-key-input').value.trim();
+      state.apiKey = v;
+      refreshData();
+    };
+    document.getElementById('tao-clear-btn').onclick = () => {
+      state.apiKey = '';
+      state.taoPrice = null;
+      state.subnetData = {};
+      state.lastUpdated = null;
+      state.error = null;
+      render();
+    };
+    document.getElementById('tao-wallet-sync-btn').onclick = () => { lookupWallet(); };
+    const walletClearBtn = document.getElementById('tao-wallet-clear-btn');
+    if (walletClearBtn) {
+      walletClearBtn.onclick = () => {
+        state.walletAddress = '';
+        state.walletHoldings = null;
+        state.walletFreeTao = null;
+        state.walletError = null;
+        savePersisted();
+        render();
+      };
+    }
+    document.getElementById('tao-add-toggle').onclick = () => {
+      state.addRowOpen = !state.addRowOpen;
+      if (state.addRowOpen) state.addRowError = null;
+      render();
+    };
+    document.getElementById('tao-debug-toggle').onclick = () => {
+      state.showDebug = !state.showDebug;
+      render();
+    };
+    document.getElementById('tao-add-confirm').onclick = () => {
+      const netuid = document.getElementById('tao-add-netuid').value;
+      const label = document.getElementById('tao-add-label').value;
+      if (!netuid) {
+        state.addRowError = 'Enter a subnet number first.';
+        render();
+        return;
+      }
+      const ok = addSubnet(netuid, label);
+      if (ok) {
+        state.addRowOpen = false;
+      } else {
+        render();
+      }
+    };
+    root.querySelectorAll('[data-remove]').forEach(el => {
+      el.onclick = () => removeSubnet(parseInt(el.getAttribute('data-remove'), 10));
+    });
+    root.querySelectorAll('[data-sync]').forEach(el => {
+      el.onclick = () => {
+        if (state.rowSyncing) return; // avoid stacking calls if one's already in flight
+        fetchSingleSubnet(parseInt(el.getAttribute('data-sync'), 10));
+      };
+    });
+
+    // preserve focus/typing in key input across re-renders triggered elsewhere
+    const keyInput = document.getElementById('tao-key-input');
+    if (keyInput) {
+      keyInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') document.getElementById('tao-connect-btn').click();
+      });
+    }
+  }
+
+  render();
+})();
+</script>
+</div>
+
+<div id="tao-pane-screener" style="display:none;">
+<div id="scr-root"></div>
+<style>
+  #scr-root, #scr-root * { box-sizing: border-box; }
+  #scr-root {
+    --bg: #0E0F12;
+    --bg-raised: #16181C;
+    --bg-input: #1C1F24;
+    --line: #2A2D33;
+    --text: #EDEAE3;
+    --text-dim: #8C8A84;
+    --text-faint: #5C5A56;
+    --amber: #C8893B;
+    --teal: #4FB3A0;
+    --red: #C75450;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    border-radius: 14px;
+    width: 100%;
+    max-width: 880px;
+    margin: 0 auto;
+    overflow: hidden;
+    border: 1px solid var(--line);
+  }
+  #scr-root .mono { font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace; }
+  .scr-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: flex-start; }
+  .scr-title { font-size: 15px; font-weight: 600; }
+  .scr-subtitle { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+  .scr-updated { font-size: 11px; color: var(--text-faint); text-align: right; line-height: 1.5; }
+  .scr-updated b { color: var(--text-dim); font-weight: 500; }
+  .scr-keybar { padding: 14px 24px; background: var(--bg-raised); border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .scr-keybar input { flex: 1; min-width: 200px; background: var(--bg-input); border: 1px solid var(--line); color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 9px 11px; border-radius: 7px; outline: none; }
+  .scr-keybar input:focus { border-color: var(--amber); }
+  .scr-btn { background: var(--amber); color: #1A1305; border: none; font-family: 'Inter', sans-serif; font-size: 12.5px; font-weight: 600; padding: 9px 16px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+  .scr-btn.secondary { background: transparent; border: 1px solid var(--line); color: var(--text-dim); }
+  .scr-note { font-size: 11px; color: var(--text-faint); width: 100%; margin-top: 6px; }
+  .scr-viewbtn {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 7px 14px;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  .scr-viewbtn.active { background: var(--bg-input); color: var(--text); border-color: var(--amber); }
+  .scr-viewbtn:hover { color: var(--text); }
+  .scr-summary { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; border-bottom: 1px solid var(--line); margin-top: 14px; }
+  .scr-summary-cell { padding: 16px 24px; border-right: 1px solid var(--line); }
+  .scr-summary-cell:last-child { border-right: none; }
+  .scr-summary-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-faint); margin-bottom: 6px; }
+  .scr-summary-value { font-size: 22px; font-weight: 500; color: #FFFFFF; }
+  .scr-table-wrap { padding: 12px 24px 20px; overflow-x: auto; }
+  table.scr-table { width: 100%; border-collapse: collapse; min-width: 760px; }
+  table.scr-table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); font-weight: 500; padding: 6px 7px; border-bottom: 1px solid var(--line); white-space: nowrap; cursor: pointer; user-select: none; }
+  table.scr-table th:hover { color: var(--text-dim); }
+  table.scr-table th.num, table.scr-table td.num { text-align: right; }
+  table.scr-table td { padding: 8px 7px; font-size: 12.5px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; color: #FFFFFF; }
+  table.scr-table tr:last-child td { border-bottom: none; }
+  table.scr-table tr:hover { background: var(--bg-raised); }
+  .scr-sn-tag { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim); background: var(--bg-input); padding: 2px 6px; border-radius: 4px; margin-right: 8px; }
+  .scr-flag { font-size: 9.5px; padding: 2px 6px; border-radius: 4px; margin-left: 6px; }
+  .scr-flag.risk { background: rgba(199,84,80,0.15); color: var(--red); }
+  .scr-flag.protected { background: rgba(200,137,59,0.15); color: var(--amber); }
+  .scr-flag.hot { background: rgba(79,179,160,0.15); color: var(--teal); }
+  .scr-empty { text-align: center; color: var(--text-faint); font-size: 12.5px; padding: 40px 8px; }
+  .scr-footnote { padding: 12px 24px 18px; font-size: 11px; color: var(--text-faint); border-top: 1px solid var(--line); line-height: 1.6; }
+  .scr-sort-arrow { font-size: 9px; margin-left: 3px; color: var(--amber); }
+</style>
+
+<script>
+(function() {
+  const root = document.getElementById('scr-root');
+
+  let state = {
+    apiKey: '',
+    subnets: [],
+    lastUpdated: null,
+    loading: false,
+    error: null,
+    sortKey: 'marketCapUsd',
+    sortDir: 'desc',
+    rawDebug: null,
+    showDebug: false,
+    fetchMode: null,
+    immunityDataAvailable: false,
+    viewMode: 'all', // 'all' | 'new'
+    newListingDays: 21,
+  };
+
+  function fmtCompactUsd(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    const abs = Math.abs(n);
+    const sign = n < 0 ? '-' : '';
+    if (abs >= 1e9) return sign + '$' + (abs/1e9).toFixed(2) + 'B';
+    if (abs >= 1e6) return sign + '$' + (abs/1e6).toFixed(2) + 'M';
+    if (abs >= 1e3) return sign + '$' + (abs/1e3).toFixed(1) + 'K';
+    return sign + '$' + abs.toFixed(2);
+  }
+  function fmtPct(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    const sign = n > 0 ? '+' : '';
+    return sign + n.toFixed(1) + '%';
+  }
+  function fmtRatio(n) {
+    if (n === null || n === undefined || isNaN(n) || !isFinite(n)) return '—';
+    return n.toFixed(2);
+  }
+  function firstNum() {
+    for (let i = 0; i < arguments.length; i++) {
+      const v = arguments[i];
+      if (v !== undefined && v !== null && v !== '' && !isNaN(parseFloat(v))) return parseFloat(v);
+    }
+    return null;
+  }
+  function timeAgo(ts) {
+    if (!ts) return 'never';
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 5) return 'just now';
+    if (s < 60) return s + 's ago';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm ago';
+    return Math.floor(m / 60) + 'h ago';
+  }
+
+  async function fetchTaoStats(path) {
+    const res = await fetch('https://api.taostats.io' + path, {
+      headers: { 'Authorization': state.apiKey, 'accept': 'application/json' }
+    });
+    if (!res.ok) throw new Error('Request failed (' + res.status + ')');
+    return res.json();
+  }
+
+  const IMMUNITY_DAYS = 122; // ~4 months
+
+  function mapSubnet(d, taoPrice, registeredAt) {
+    const priceTao = firstNum(d.price);
+    const marketCapTao = d.market_cap !== undefined ? firstNum(d.market_cap) / 1e9 : null;
+    const liquidityTao = d.liquidity !== undefined ? firstNum(d.liquidity) / 1e9 : null;
+    const buyVol = firstNum(d.tao_buy_volume_24_hr);
+    const sellVol = firstNum(d.tao_sell_volume_24_hr);
+    let daysSinceRegistration = null;
+    let isImmune = null; // null = unknown (no registration data available), not false
+    if (registeredAt) {
+      const regTime = new Date(registeredAt).getTime();
+      if (!isNaN(regTime)) {
+        daysSinceRegistration = (Date.now() - regTime) / (1000 * 60 * 60 * 24);
+        isImmune = daysSinceRegistration < IMMUNITY_DAYS;
+      }
+    }
+    return {
+      netuid: d.netuid,
+      name: d.name || ('SN' + d.netuid),
+      priceUsd: (taoPrice && priceTao !== null) ? taoPrice * priceTao : null,
+      marketCapUsd: (taoPrice && marketCapTao !== null) ? taoPrice * marketCapTao : null,
+      liquidityUsd: (taoPrice && liquidityTao !== null) ? taoPrice * liquidityTao : null,
+      change24h: firstNum(d.price_change_1_day),
+      change7d: firstNum(d.price_change_1_week),
+      change1m: firstNum(d.price_change_1_month),
+      rank: d.rank !== undefined ? parseInt(d.rank, 10) : null,
+      buySellRatio: (buyVol !== null && sellVol) ? buyVol / sellVol : null,
+      volume24hTao: firstNum(d.tao_volume_24_hr),
+      daysSinceRegistration: daysSinceRegistration,
+      isImmune: isImmune,
+    };
+  }
+
+  async function refreshData() {
+    if (!state.apiKey) {
+      state.error = 'Add your taostats API key above to load the screener.';
+      render();
+      return;
+    }
+    state.loading = true;
+    state.error = null;
+    render();
+
+    try {
+      const priceData = await fetchTaoStats('/api/price/latest/v1?asset=tao');
+      const p = (priceData && priceData.data && priceData.data[0]) || {};
+      const taoPrice = firstNum(p.price, p.price_usd);
+
+      let bulk;
+      try {
+        bulk = await fetchTaoStats('/api/dtao/pool/latest/v1?page_size=300');
+      } catch (e) {
+        bulk = null;
+      }
+
+      // Second call: try to get registration dates so we can compute immunity
+      // (new subnets get ~4 months of protection from deregistration).
+      // Endpoint/field names here are a best guess from taostats' docs, not
+      // confirmed against a live response — fails gracefully into "unknown"
+      // immunity status rather than breaking the screener if wrong.
+      let regInfo = null;
+      let regFetchOk = false;
+      try {
+        regInfo = await fetchTaoStats('/api/subnet/latest/v1?page_size=300');
+        regFetchOk = Array.isArray(regInfo && regInfo.data) && regInfo.data.length > 5;
+      } catch (e) {
+        regFetchOk = false;
+      }
+      const regByNetuid = {};
+      if (regFetchOk) {
+        regInfo.data.forEach(r => {
+          const ts = r.registered_at || r.registration_timestamp || r.created_at || r.timestamp;
+          if (r.netuid !== undefined && ts) regByNetuid[r.netuid] = ts;
+        });
+      }
+      state.immunityDataAvailable = regFetchOk && Object.keys(regByNetuid).length > 0;
+
+      if (bulk && Array.isArray(bulk.data) && bulk.data.length > 5) {
+        state.fetchMode = 'bulk (' + bulk.data.length + ' subnets in one call)';
+        // Exclude netuid 0 (Root) — it's the meta-subnet, always priced at 1 TAO
+        // by definition, not an investable Alpha token. Including it skews the
+        // combined market cap and gives it a misleading "rank 0" that isn't a
+        // real safety signal the way it is for actual subnets.
+        state.subnets = bulk.data.filter(d => d.netuid !== 0).map(d => mapSubnet(d, taoPrice, regByNetuid[d.netuid]));
+        state.rawDebug = {
+          price: priceData,
+          bulk_total: bulk.data.length,
+          reg_info_total_rows: regFetchOk ? regInfo.data.length : 0,
+          reg_by_netuid_count: Object.keys(regByNetuid).length,
+          reg_by_netuid_sample_keys: Object.keys(regByNetuid).slice(0, 15),
+          lookup_check_sn40_ralph: { found: regByNetuid[40] !== undefined, value: regByNetuid[40] || null },
+          lookup_check_sn82_compelle: { found: regByNetuid[82] !== undefined, value: regByNetuid[82] || null },
+          computed_immunity_for_sn40: state.subnets.find(s => s.netuid === 40) ? { isImmune: state.subnets.find(s => s.netuid === 40).isImmune, daysSinceRegistration: state.subnets.find(s => s.netuid === 40).daysSinceRegistration } : 'not found in subnets list',
+        };
+      } else {
+        state.error = 'Bulk endpoint did not return a full subnet list (got ' + (bulk && bulk.data ? bulk.data.length : 0) + ' rows). Falling back is not yet implemented in this build — try Sync again, or this may indicate the free tier rate limit (5 req/min) was hit.';
+        state.rawDebug = { price: priceData, bulk_raw: bulk };
+      }
+      state.lastUpdated = Date.now();
+    } catch (e) {
+      state.error = e.message || 'Could not reach taostats. Check your API key.';
+    }
+    state.loading = false;
+    render();
+  }
+
+  function sortedSubnets() {
+    let arr = state.subnets.slice();
+    if (state.viewMode === 'new') {
+      arr = arr.filter(s => s.daysSinceRegistration !== null && s.daysSinceRegistration <= state.newListingDays);
+    }
+    const key = state.sortKey;
+    const dir = state.sortDir === 'asc' ? 1 : -1;
+    arr.sort((a, b) => {
+      const av = a[key], bv = b[key];
+      if (av === null || av === undefined) return 1;
+      if (bv === null || bv === undefined) return -1;
+      return (av - bv) * dir;
+    });
+    return arr;
+  }
+
+  function setViewMode(mode) {
+    state.viewMode = mode;
+    if (mode === 'new') {
+      state.sortKey = 'daysSinceRegistration';
+      state.sortDir = 'asc';
+    } else {
+      state.sortKey = 'marketCapUsd';
+      state.sortDir = 'desc';
+    }
+    render();
+  }
+
+  function median(arr) {
+    const vals = arr.filter(v => v !== null && v !== undefined && !isNaN(v)).slice().sort((a, b) => a - b);
+    if (vals.length === 0) return null;
+    const mid = Math.floor(vals.length / 2);
+    return vals.length % 2 !== 0 ? vals[mid] : (vals[mid - 1] + vals[mid]) / 2;
+  }
+
+  function setSort(key) {
+    if (state.sortKey === key) {
+      state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.sortKey = key;
+      state.sortDir = 'desc';
+    }
+    render();
+  }
+
+  function sortArrow(key) {
+    if (state.sortKey !== key) return '';
+    return '<span class="scr-sort-arrow">' + (state.sortDir === 'asc' ? '\u25B2' : '\u25BC') + '</span>';
+  }
+
+  function render() {
+    const list = sortedSubnets();
+    const total = state.subnets.length;
+    const totalMcap = state.subnets.reduce((s, x) => s + (x.marketCapUsd || 0), 0);
+    const riskCutoff = total > 10 ? total - 10 : null;
+    // Momentum is relative to the cohort, not a fixed number — a flat +20%
+    // move means something different in a week the whole sector is up 80%
+    // versus a week it's down double digits. Flag outperformance of the
+    // median 7d move by a meaningful margin, recomputed every sync.
+    const med7d = median(state.subnets.map(s => s.change7d));
+    const momentumThreshold = med7d !== null ? med7d + 15 : 20;
+
+    root.innerHTML = `
+      <div class="scr-header">
+        <div>
+          <div class="scr-title">Subnet screener</div>
+          <div class="scr-subtitle">All tracked subnets, ranked by live on-chain signals</div>
+        </div>
+        <div class="scr-updated"><div>Last synced</div><div><b>${timeAgo(state.lastUpdated)}</b></div></div>
+      </div>
+
+      <div class="scr-keybar">
+        <input id="scr-key-input" type="password" placeholder="Paste your taostats API key (same key as Allocation terminal)" value="${state.apiKey}" />
+        <button class="scr-btn" id="scr-sync-btn">${state.loading ? 'Syncing…' : 'Sync now'}</button>
+        <button class="scr-btn secondary" id="scr-clear-btn">Clear</button>
+        <div class="scr-note">${state.error ? '⚠ ' + state.error : (state.fetchMode ? 'Loaded via ' + state.fetchMode + '.' : 'Key stays in this browser tab only.')}</div>
+      </div>
+
+      <div style="padding:14px 24px 0; display:flex; gap:8px;">
+        <button class="scr-viewbtn ${state.viewMode === 'all' ? 'active' : ''}" id="scr-view-all">All subnets</button>
+        <button class="scr-viewbtn ${state.viewMode === 'new' ? 'active' : ''}" id="scr-view-new">New listings (\u226421d)</button>
+      </div>
+
+      ${state.viewMode === 'new' ? `
+        <div class="scr-summary">
+          <div class="scr-summary-cell"><div class="scr-summary-label">New listings</div><div class="scr-summary-value">${list.length}</div></div>
+          <div class="scr-summary-cell"><div class="scr-summary-label">Combined mkt cap</div><div class="scr-summary-value">${fmtCompactUsd(list.reduce((s, x) => s + (x.marketCapUsd || 0), 0))}</div></div>
+          <div class="scr-summary-cell"><div class="scr-summary-label">Median buy/sell</div><div class="scr-summary-value" style="font-size:18px;">${fmtRatio(median(list.map(s => s.buySellRatio)))}</div></div>
+          <div class="scr-summary-cell"><div class="scr-summary-label">Immunity window</div><div class="scr-summary-value" style="font-size:14px;">~122 days</div></div>
+        </div>
+      ` : `
+        <div class="scr-summary">
+          <div class="scr-summary-cell"><div class="scr-summary-label">Subnets loaded</div><div class="scr-summary-value">${total || '—'}</div></div>
+          <div class="scr-summary-cell"><div class="scr-summary-label">Combined mkt cap</div><div class="scr-summary-value">${fmtCompactUsd(totalMcap)}</div></div>
+          <div class="scr-summary-cell"><div class="scr-summary-label">Median 7d move</div><div class="scr-summary-value" style="font-size:18px; ${med7d > 0 ? 'color:var(--teal)' : (med7d < 0 ? 'color:var(--red)' : '')}">${med7d !== null ? fmtPct(med7d) : '—'}</div></div>
+          <div class="scr-summary-cell"><div class="scr-summary-label">Deregistration risk</div><div class="scr-summary-value" style="font-size:14px;">bottom 10${state.immunityDataAvailable ? ', immunity-checked' : ' by rank'}</div></div>
+        </div>
+      `}
+
+      <div class="scr-table-wrap">
+        <table class="scr-table">
+          ${state.viewMode === 'new' ? `
+            <thead>
+              <tr>
+                <th data-sort="name">Subnet</th>
+                <th class="num" data-sort="daysSinceRegistration">Age (days) ${sortArrow('daysSinceRegistration')}</th>
+                <th class="num" data-sort="priceUsd">Price ${sortArrow('priceUsd')}</th>
+                <th class="num" data-sort="marketCapUsd">Mkt cap ${sortArrow('marketCapUsd')}</th>
+                <th class="num" data-sort="liquidityUsd">Liquidity ${sortArrow('liquidityUsd')}</th>
+                <th class="num" data-sort="buySellRatio">Buy/Sell ${sortArrow('buySellRatio')}</th>
+                <th class="num" data-sort="change24h">24h ${sortArrow('change24h')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${list.length === 0 ? `<tr><td colspan="7" class="scr-empty">No subnets registered in the last ${state.newListingDays} days right now.</td></tr>` :
+                list.map(s => {
+                  const deltaClass24 = s.change24h > 0 ? 'style="color:var(--teal)"' : (s.change24h < 0 ? 'style="color:var(--red)"' : '');
+                  const bsHigh = s.buySellRatio !== null && s.buySellRatio > 1.3;
+                  const bsLow = s.buySellRatio !== null && s.buySellRatio < 0.7;
+                  return `
+                    <tr>
+                      <td><span class="scr-sn-tag">SN${s.netuid}</span>${s.name}</td>
+                      <td class="num mono">${s.daysSinceRegistration !== null ? s.daysSinceRegistration.toFixed(1) : '—'}</td>
+                      <td class="num mono">${s.priceUsd !== null ? '$' + s.priceUsd.toFixed(2) : '—'}</td>
+                      <td class="num mono">${fmtCompactUsd(s.marketCapUsd)}</td>
+                      <td class="num mono">${fmtCompactUsd(s.liquidityUsd)}</td>
+                      <td class="num mono" style="${bsHigh ? 'color:var(--teal)' : (bsLow ? 'color:var(--red)' : '')}">${fmtRatio(s.buySellRatio)}</td>
+                      <td class="num mono" ${deltaClass24}>${fmtPct(s.change24h)}</td>
+                    </tr>
+                  `;
+                }).join('')
+              }
+            </tbody>
+          ` : `
+            <thead>
+              <tr>
+                <th data-sort="name">Subnet</th>
+                <th class="num" data-sort="priceUsd">Price ${sortArrow('priceUsd')}</th>
+                <th class="num" data-sort="marketCapUsd">Mkt cap ${sortArrow('marketCapUsd')}</th>
+                <th class="num" data-sort="liquidityUsd">Liquidity ${sortArrow('liquidityUsd')}</th>
+                <th class="num" data-sort="change24h">24h ${sortArrow('change24h')}</th>
+                <th class="num" data-sort="change7d">7d ${sortArrow('change7d')}</th>
+                <th class="num" data-sort="buySellRatio">Buy/Sell ${sortArrow('buySellRatio')}</th>
+                <th class="num" data-sort="rank">Rank ${sortArrow('rank')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${list.length === 0 ? `<tr><td colspan="8" class="scr-empty">No data yet — paste your API key and click Sync now.</td></tr>` :
+                list.map(s => {
+                  const deltaClass24 = s.change24h > 0 ? 'style="color:var(--teal)"' : (s.change24h < 0 ? 'style="color:var(--red)"' : '');
+                  const deltaClass7 = s.change7d > 0 ? 'style="color:var(--teal)"' : (s.change7d < 0 ? 'style="color:var(--red)"' : '');
+                  const inBottomTen = riskCutoff !== null && s.rank !== null && s.rank > riskCutoff;
+                  const isRisk = inBottomTen && s.isImmune !== true;
+                  const isProtected = inBottomTen && s.isImmune === true;
+                  // Momentum, in the steady-state view, is only meaningful for
+                  // subnets old enough that a 7d window isn't mostly measuring
+                  // their own initial listing — new listings have their own view.
+                  const isHot = s.change7d !== null && s.change7d > momentumThreshold && s.daysSinceRegistration !== null && s.daysSinceRegistration > 21;
+                  return `
+                    <tr>
+                      <td><span class="scr-sn-tag">SN${s.netuid}</span>${s.name}${isRisk ? '<span class="scr-flag risk">deregistration risk</span>' : ''}${isProtected ? '<span class="scr-flag protected">bottom-ranked, immune</span>' : ''}${isHot ? '<span class="scr-flag hot">momentum</span>' : ''}</td>
+                      <td class="num mono">${s.priceUsd !== null ? '$' + s.priceUsd.toFixed(2) : '—'}</td>
+                      <td class="num mono">${fmtCompactUsd(s.marketCapUsd)}</td>
+                      <td class="num mono">${fmtCompactUsd(s.liquidityUsd)}</td>
+                      <td class="num mono" ${deltaClass24}>${fmtPct(s.change24h)}</td>
+                      <td class="num mono" ${deltaClass7}>${fmtPct(s.change7d)}</td>
+                      <td class="num mono">${fmtRatio(s.buySellRatio)}</td>
+                      <td class="num mono">${s.rank !== null ? s.rank : '—'}</td>
+                    </tr>
+                  `;
+                }).join('')
+              }
+            </tbody>
+          `}
+        </table>
+      </div>
+
+
+      <div class="scr-footnote">
+        ${state.viewMode === 'new' ? `
+          Showing subnets registered in the last ${state.newListingDays} days, sorted youngest-first by default. Price/market cap moves on subnets this new mostly reflect early, thin-liquidity price discovery rather than the kind of trend the "momentum" flag captures elsewhere — read 24h% and Buy/Sell ratio (net accumulation vs. distribution) as more meaningful here than longer-window percentages. All are inside their ~4-month registration immunity, so deregistration is not a near-term risk regardless of rank. This view can't yet show whether liquidity is growing or shrinking day-over-day — that needs price history across multiple syncs, which isn't tracked yet. Excludes Root (SN0). Not financial advice.
+        ` : `
+          All figures live via the taostats API, excluding the Root network (SN0), which isn't an investable Alpha token. "Deregistration risk" flags subnets ranked in the bottom 10 that are NOT inside their ~4-month registration immunity window — taostats deregisters the lowest-ranked eligible subnet whenever a new one registers, so this is a real mechanical risk, not a prediction. Bottom-ranked subnets still inside immunity show "bottom-ranked, immune" instead, since they can't actually be deregistered yet. ${state.immunityDataAvailable ? '' : 'Registration-date data did not load this sync, so immunity status is currently unknown for all subnets and every bottom-10 subnet is shown as at-risk by default — treat this as a conservative upper bound, not confirmed risk. '}"Momentum" flags subnets older than 21 days beating the cohort's own median 7-day move by 15+ points, recalculated every sync — newer subnets are excluded from this flag since their 7d window mostly predates their own listing, and have their own dedicated view instead. It can still reflect genuine traction or thin-liquidity volatility — check liquidity before reading too much into it. This is not financial advice.
+        `}
+        <span style="color:var(--amber); cursor:pointer; margin-left:8px;" id="scr-debug-toggle">${state.showDebug ? 'hide raw response' : 'show raw response'}</span>
+      </div>
+      ${state.showDebug ? `<div style="padding:0 24px 20px; font-size:11px;"><pre class="mono" style="background:var(--bg-input); border:1px solid var(--line); border-radius:8px; padding:12px; max-height:260px; overflow:auto; white-space:pre-wrap; color:var(--text-dim);">${JSON.stringify(state.rawDebug, null, 2).replace(/</g, '&lt;')}</pre></div>` : ''}
+    `;
+
+    document.getElementById('scr-sync-btn').onclick = () => {
+      state.apiKey = document.getElementById('scr-key-input').value.trim();
+      refreshData();
+    };
+    document.getElementById('scr-clear-btn').onclick = () => {
+      state.apiKey = ''; state.subnets = []; state.lastUpdated = null; state.error = null; state.fetchMode = null;
+      render();
+    };
+    document.getElementById('scr-debug-toggle').onclick = () => { state.showDebug = !state.showDebug; render(); };
+    document.getElementById('scr-view-all').onclick = () => setViewMode('all');
+    document.getElementById('scr-view-new').onclick = () => setViewMode('new');
+    root.querySelectorAll('th[data-sort]').forEach(th => {
+      th.onclick = () => setSort(th.getAttribute('data-sort'));
+    });
+  }
+
+  render();
+})();
+</script>
+</div>
