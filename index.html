@@ -1080,9 +1080,139 @@
     showDebug: false,
     fetchMode: null,
     immunityDataAvailable: false,
+    flowDataAvailable: false,
     viewMode: 'all', // 'all' | 'new'
     newListingDays: 21,
+    flowHistory: {},        // { [netuid]: [{t, f, l}, ...] } — raw snapshots only, hydrated from storage on load
+    flowHistoryLoaded: false,
+    flowHistoryError: null, // last storage read/write error, if any — shown, not hidden
   };
+
+  // ---- Flow history persistence (localStorage) ----
+  // Originally built on window.storage (Claude's artifact persistence API),
+  // but Claude's artifact sandbox also blocks outbound fetch() to
+  // api.taostats.io entirely — so live data only works when this file is
+  // opened as a plain HTML file in a normal browser tab, where window.storage
+  // doesn't exist. localStorage works in both contexts and keeps this one
+  // file fully self-consistent, at the cost of not syncing across devices.
+  // Still one combined key for all subnets rather than one per subnet, to
+  // keep writes to a single localStorage call per sync regardless of
+  // watchlist length.
+  const FLOW_HISTORY_KEY = 'tao_dashboard_flow_history_v1';
+  const FLOW_HISTORY_MAX_DAYS = 180;
+  const FLOW_HISTORY_MAX_ENTRIES = 2000;
+
+  async function loadFlowHistory() {
+    // Uses localStorage, not window.storage — window.storage only exists
+    // inside Claude's artifact sandbox, which also blocks outbound fetch()
+    // to api.taostats.io entirely. Since live data is the whole point of
+    // this tool, localStorage (works in any browser tab, including the
+    // downloaded file) is the consistent choice, even though it means flow
+    // history is per-browser/device rather than synced via Claude's account.
+    try {
+      const raw = localStorage.getItem(FLOW_HISTORY_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        state.flowHistory = (parsed && typeof parsed === 'object') ? parsed : {};
+      } else {
+        state.flowHistory = {};
+      }
+      state.flowHistoryError = null;
+    } catch (e) {
+      // Corrupted JSON, private-browsing restrictions, or storage disabled
+      // entirely — fall back to an empty history rather than break the page.
+      state.flowHistory = {};
+      state.flowHistoryError = 'Could not load flow history: ' + (e && e.message ? e.message : 'unknown error');
+    }
+    state.flowHistoryLoaded = true;
+  }
+
+  function trimHistory(arr) {
+    const cutoff = Date.now() - FLOW_HISTORY_MAX_DAYS * 24 * 60 * 60 * 1000;
+    let trimmed = arr.filter(pt => pt.t >= cutoff);
+    if (trimmed.length > FLOW_HISTORY_MAX_ENTRIES) {
+      trimmed = trimmed.slice(trimmed.length - FLOW_HISTORY_MAX_ENTRIES);
+    }
+    return trimmed;
+  }
+
+  async function appendAndSaveFlowHistory(subnets) {
+    // Append one raw snapshot per subnet currently in view, trim each
+    // subnet's array independently against both caps, then write the whole
+    // combined object back in a single localStorage write.
+    const now = Date.now();
+    subnets.forEach(s => {
+      if (s.netFlow1dTao === null && s.liquidityUsd === null) return; // nothing real to record
+      const key = String(s.netuid);
+      const existing = Array.isArray(state.flowHistory[key]) ? state.flowHistory[key] : [];
+      existing.push({ t: now, f: s.netFlow1dTao, l: s.liquidityUsd });
+      state.flowHistory[key] = trimHistory(existing);
+    });
+    try {
+      localStorage.setItem(FLOW_HISTORY_KEY, JSON.stringify(state.flowHistory));
+      state.flowHistoryError = null;
+    } catch (e) {
+      // Most likely cause: localStorage quota exceeded (~5-10MB depending on
+      // browser) if the watchlist is very long and has run for a very long
+      // time. Surfaced plainly rather than silently dropping the write.
+      state.flowHistoryError = 'Could not save flow history this sync: ' + (e && e.message ? e.message : 'unknown error');
+    }
+  }
+
+  function computeStreak(netuid) {
+    // Pure, computed at render time from raw history only — no derived
+    // fields are ever stored, so changing this definition later doesn't
+    // require migrating stored data.
+    const arr = state.flowHistory[String(netuid)];
+    if (!Array.isArray(arr) || arr.length === 0) {
+      return { available: false, count: 0, dir: null, since: null };
+    }
+    const sorted = arr.slice().sort((a, b) => a.t - b.t);
+    const sign = v => (v === null || v === undefined || isNaN(v)) ? null : (v > 0 ? 1 : (v < 0 ? -1 : 0));
+    let count = 0;
+    let dir = null;
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      const s = sign(sorted[i].f);
+      if (s === null) break; // unknown breaks the streak rather than guessing
+      if (dir === null) { dir = s; count = 1; continue; }
+      if (s === dir) { count++; } else { break; }
+    }
+    return {
+      available: sorted.length > 0,
+      count: count,
+      dir: dir, // 1 = inflow streak, -1 = outflow streak, 0 = flat streak, null = unknown
+      since: sorted[0].t,
+      totalSnapshots: sorted.length,
+    };
+  }
+
+  function exportFlowHistory() {
+    try {
+      const blob = new Blob([JSON.stringify(state.flowHistory, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'tao_flow_history_' + new Date().toISOString().slice(0, 10) + '.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      state.flowHistoryError = 'Export failed: ' + (e && e.message ? e.message : 'unknown error');
+      render();
+    }
+  }
+
+  function fmtStreak(streak) {
+    if (!streak.available) return { label: 'tracking starts now', color: 'var(--text-faint)' };
+    if (streak.dir === null || streak.count === 0) return { label: '\u2014', color: 'var(--text-faint)' };
+    const sinceDate = new Date(streak.since);
+    const dayLabel = streak.count === 1 ? '1 sync' : streak.count + ' syncs';
+    if (streak.dir > 0) return { label: '\u2191 ' + dayLabel, color: 'var(--teal)', title: 'Inflow for ' + streak.count + ' consecutive synced reading(s), tracking since ' + sinceDate.toLocaleDateString() };
+    if (streak.dir < 0) return { label: '\u2193 ' + dayLabel, color: 'var(--red)', title: 'Outflow for ' + streak.count + ' consecutive synced reading(s), tracking since ' + sinceDate.toLocaleDateString() };
+    return { label: '\u2192 ' + dayLabel, color: 'var(--text-dim)', title: 'Flat for ' + streak.count + ' consecutive synced reading(s)' };
+  }
+
 
   function fmtCompactUsd(n) {
     if (n === null || n === undefined || isNaN(n)) return '—';
@@ -1101,6 +1231,23 @@
   function fmtRatio(n) {
     if (n === null || n === undefined || isNaN(n) || !isFinite(n)) return '—';
     return n.toFixed(2);
+  }
+  function fmtFlow(taoAmount) {
+    // Net stake flow, in TAO. Sign indicates direction; a small dead zone
+    // around zero is treated as "flat" rather than noise being read as a
+    // confident in/outflow signal.
+    if (taoAmount === null || taoAmount === undefined || isNaN(taoAmount)) {
+      return { label: '—', dir: 'unknown', color: 'var(--text-faint)' };
+    }
+    const abs = Math.abs(taoAmount);
+    const magnitude = abs >= 1000 ? (abs / 1000).toFixed(1) + 'K \u03c4' : abs.toFixed(1) + ' \u03c4';
+    if (abs < 1) {
+      return { label: '\u2192 flat', dir: 'flat', color: 'var(--text-dim)' };
+    }
+    if (taoAmount > 0) {
+      return { label: '\u2191 ' + magnitude, dir: 'inflow', color: 'var(--teal)' };
+    }
+    return { label: '\u2193 ' + magnitude, dir: 'outflow', color: 'var(--red)' };
   }
   function firstNum() {
     for (let i = 0; i < arguments.length; i++) {
@@ -1129,7 +1276,7 @@
 
   const IMMUNITY_DAYS = 122; // ~4 months
 
-  function mapSubnet(d, taoPrice, registeredAt) {
+  function mapSubnet(d, taoPrice, registeredAt, flowInfo) {
     const priceTao = firstNum(d.price);
     const marketCapTao = d.market_cap !== undefined ? firstNum(d.market_cap) / 1e9 : null;
     const liquidityTao = d.liquidity !== undefined ? firstNum(d.liquidity) / 1e9 : null;
@@ -1143,6 +1290,22 @@
         daysSinceRegistration = (Date.now() - regTime) / (1000 * 60 * 60 * 24);
         isImmune = daysSinceRegistration < IMMUNITY_DAYS;
       }
+    }
+    // Net Tao flow — confirmed real field from /api/subnet/latest/v1, already
+    // signed (positive = net inflow, negative = net outflow) and pre-aggregated
+    // by taostats across three windows. RAO units, same conversion as everywhere
+    // else in this API (1 TAO = 1e9 RAO). This is taoflow-era emissions-relevant
+    // data, distinct from price — a subnet can be flat or up on price while
+    // bleeding net stake, which is exactly the gap this column is meant to show.
+    let netFlow1dTao = null, netFlow7dTao = null, netFlow30dTao = null;
+    let flowDataAvailable = false;
+    if (flowInfo) {
+      const f1 = firstNum(flowInfo.net_flow_1_day);
+      const f7 = firstNum(flowInfo.net_flow_7_days);
+      const f30 = firstNum(flowInfo.net_flow_30_days);
+      if (f1 !== null) { netFlow1dTao = f1 / 1e9; flowDataAvailable = true; }
+      if (f7 !== null) { netFlow7dTao = f7 / 1e9; flowDataAvailable = true; }
+      if (f30 !== null) { netFlow30dTao = f30 / 1e9; flowDataAvailable = true; }
     }
     return {
       netuid: d.netuid,
@@ -1158,6 +1321,11 @@
       volume24hTao: firstNum(d.tao_volume_24_hr),
       daysSinceRegistration: daysSinceRegistration,
       isImmune: isImmune,
+      netFlow1dTao: netFlow1dTao,
+      netFlow7dTao: netFlow7dTao,
+      netFlow30dTao: netFlow30dTao,
+      netFlow1dUsd: (taoPrice && netFlow1dTao !== null) ? netFlow1dTao * taoPrice : null,
+      flowDataAvailable: flowDataAvailable,
     };
   }
 
@@ -1183,11 +1351,12 @@
         bulk = null;
       }
 
-      // Second call: try to get registration dates so we can compute immunity
-      // (new subnets get ~4 months of protection from deregistration).
-      // Endpoint/field names here are a best guess from taostats' docs, not
-      // confirmed against a live response — fails gracefully into "unknown"
-      // immunity status rather than breaking the screener if wrong.
+      // Second call: try to get registration dates (for immunity) AND net
+      // Tao flow (confirmed real fields: net_flow_1_day, net_flow_7_days,
+      // net_flow_30_days — already signed, RAO units) from the same
+      // /api/subnet/latest/v1 response. Endpoint/field names for registration
+      // were confirmed live earlier; flow fields were confirmed live in the
+      // same payload, so no extra API call needed for this signal.
       let regInfo = null;
       let regFetchOk = false;
       try {
@@ -1197,13 +1366,22 @@
         regFetchOk = false;
       }
       const regByNetuid = {};
+      const flowByNetuid = {};
       if (regFetchOk) {
         regInfo.data.forEach(r => {
           const ts = r.registered_at || r.registration_timestamp || r.created_at || r.timestamp;
           if (r.netuid !== undefined && ts) regByNetuid[r.netuid] = ts;
+          if (r.netuid !== undefined && (r.net_flow_1_day !== undefined || r.net_flow_7_days !== undefined || r.net_flow_30_days !== undefined)) {
+            flowByNetuid[r.netuid] = {
+              net_flow_1_day: r.net_flow_1_day,
+              net_flow_7_days: r.net_flow_7_days,
+              net_flow_30_days: r.net_flow_30_days,
+            };
+          }
         });
       }
       state.immunityDataAvailable = regFetchOk && Object.keys(regByNetuid).length > 0;
+      state.flowDataAvailable = regFetchOk && Object.keys(flowByNetuid).length > 0;
 
       if (bulk && Array.isArray(bulk.data) && bulk.data.length > 5) {
         state.fetchMode = 'bulk (' + bulk.data.length + ' subnets in one call)';
@@ -1211,12 +1389,14 @@
         // by definition, not an investable Alpha token. Including it skews the
         // combined market cap and gives it a misleading "rank 0" that isn't a
         // real safety signal the way it is for actual subnets.
-        state.subnets = bulk.data.filter(d => d.netuid !== 0).map(d => mapSubnet(d, taoPrice, regByNetuid[d.netuid]));
+        state.subnets = bulk.data.filter(d => d.netuid !== 0).map(d => mapSubnet(d, taoPrice, regByNetuid[d.netuid], flowByNetuid[d.netuid]));
         state.rawDebug = {
           price: priceData,
           bulk_total: bulk.data.length,
           reg_info_total_rows: regFetchOk ? regInfo.data.length : 0,
           reg_by_netuid_count: Object.keys(regByNetuid).length,
+          flow_by_netuid_count: Object.keys(flowByNetuid).length,
+          flow_sample_sn40: flowByNetuid[40] || 'not found',
           reg_by_netuid_sample_keys: Object.keys(regByNetuid).slice(0, 15),
           lookup_check_sn40_ralph: { found: regByNetuid[40] !== undefined, value: regByNetuid[40] || null },
           lookup_check_sn82_compelle: { found: regByNetuid[82] !== undefined, value: regByNetuid[82] || null },
@@ -1227,6 +1407,12 @@
         state.rawDebug = { price: priceData, bulk_raw: bulk };
       }
       state.lastUpdated = Date.now();
+      if (Array.isArray(state.subnets) && state.subnets.length > 0) {
+        // Fire-and-await the history append/save, but don't let a storage
+        // hiccup break the sync that already succeeded — render now with
+        // fresh price data, history error (if any) surfaces on next render.
+        await appendAndSaveFlowHistory(state.subnets);
+      }
     } catch (e) {
       state.error = e.message || 'Could not reach taostats. Check your API key.';
     }
@@ -1312,10 +1498,13 @@
         <div class="scr-note">${state.error ? '⚠ ' + state.error : (state.fetchMode ? 'Loaded via ' + state.fetchMode + '.' : 'Key stays in this browser tab only.')}</div>
       </div>
 
-      <div style="padding:14px 24px 0; display:flex; gap:8px;">
+      <div style="padding:14px 24px 0; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         <button class="scr-viewbtn ${state.viewMode === 'all' ? 'active' : ''}" id="scr-view-all">All subnets</button>
         <button class="scr-viewbtn ${state.viewMode === 'new' ? 'active' : ''}" id="scr-view-new">New listings (\u226421d)</button>
+        <span style="flex:1;"></span>
+        <button class="scr-viewbtn" id="scr-export-flow-btn" title="Download the raw flow history JSON as a backup">Download flow history</button>
       </div>
+      ${state.flowHistoryError ? `<div style="padding:6px 24px 0; font-size:11px; color:var(--red);">⚠ ${state.flowHistoryError}</div>` : (!state.flowHistoryLoaded ? `<div style="padding:6px 24px 0; font-size:11px; color:var(--text-faint);">Loading flow history…</div>` : '')}
 
       ${state.viewMode === 'new' ? `
         <div class="scr-summary">
@@ -1344,15 +1533,19 @@
                 <th class="num" data-sort="marketCapUsd">Mkt cap ${sortArrow('marketCapUsd')}</th>
                 <th class="num" data-sort="liquidityUsd">Liquidity ${sortArrow('liquidityUsd')}</th>
                 <th class="num" data-sort="buySellRatio">Buy/Sell ${sortArrow('buySellRatio')}</th>
+                <th class="num" data-sort="netFlow1dTao">Net flow (24h) ${sortArrow('netFlow1dTao')}</th>
+                <th class="num">Flow streak</th>
                 <th class="num" data-sort="change24h">24h ${sortArrow('change24h')}</th>
               </tr>
             </thead>
             <tbody>
-              ${list.length === 0 ? `<tr><td colspan="7" class="scr-empty">No subnets registered in the last ${state.newListingDays} days right now.</td></tr>` :
+              ${list.length === 0 ? `<tr><td colspan="9" class="scr-empty">No subnets registered in the last ${state.newListingDays} days right now.</td></tr>` :
                 list.map(s => {
                   const deltaClass24 = s.change24h > 0 ? 'style="color:var(--teal)"' : (s.change24h < 0 ? 'style="color:var(--red)"' : '');
                   const bsHigh = s.buySellRatio !== null && s.buySellRatio > 1.3;
                   const bsLow = s.buySellRatio !== null && s.buySellRatio < 0.7;
+                  const flow1d = fmtFlow(s.netFlow1dTao);
+                  const streak = fmtStreak(computeStreak(s.netuid));
                   return `
                     <tr>
                       <td><span class="scr-sn-tag">SN${s.netuid}</span>${s.name}</td>
@@ -1361,6 +1554,8 @@
                       <td class="num mono">${fmtCompactUsd(s.marketCapUsd)}</td>
                       <td class="num mono">${fmtCompactUsd(s.liquidityUsd)}</td>
                       <td class="num mono" style="${bsHigh ? 'color:var(--teal)' : (bsLow ? 'color:var(--red)' : '')}">${fmtRatio(s.buySellRatio)}</td>
+                      <td class="num mono" style="color:${flow1d.color}">${flow1d.label}</td>
+                      <td class="num mono" style="color:${streak.color}" title="${(streak.title || '').replace(/"/g, '&quot;')}">${streak.label}</td>
                       <td class="num mono" ${deltaClass24}>${fmtPct(s.change24h)}</td>
                     </tr>
                   `;
@@ -1376,12 +1571,14 @@
                 <th class="num" data-sort="liquidityUsd">Liquidity ${sortArrow('liquidityUsd')}</th>
                 <th class="num" data-sort="change24h">24h ${sortArrow('change24h')}</th>
                 <th class="num" data-sort="change7d">7d ${sortArrow('change7d')}</th>
+                <th class="num" data-sort="netFlow1dTao">Net flow (24h) ${sortArrow('netFlow1dTao')}</th>
+                <th class="num">Flow streak</th>
                 <th class="num" data-sort="buySellRatio">Buy/Sell ${sortArrow('buySellRatio')}</th>
                 <th class="num" data-sort="rank">Rank ${sortArrow('rank')}</th>
               </tr>
             </thead>
             <tbody>
-              ${list.length === 0 ? `<tr><td colspan="8" class="scr-empty">No data yet — paste your API key and click Sync now.</td></tr>` :
+              ${list.length === 0 ? `<tr><td colspan="10" class="scr-empty">No data yet — paste your API key and click Sync now.</td></tr>` :
                 list.map(s => {
                   const deltaClass24 = s.change24h > 0 ? 'style="color:var(--teal)"' : (s.change24h < 0 ? 'style="color:var(--red)"' : '');
                   const deltaClass7 = s.change7d > 0 ? 'style="color:var(--teal)"' : (s.change7d < 0 ? 'style="color:var(--red)"' : '');
@@ -1392,6 +1589,8 @@
                   // subnets old enough that a 7d window isn't mostly measuring
                   // their own initial listing — new listings have their own view.
                   const isHot = s.change7d !== null && s.change7d > momentumThreshold && s.daysSinceRegistration !== null && s.daysSinceRegistration > 21;
+                  const flow1d = fmtFlow(s.netFlow1dTao);
+                  const streak = fmtStreak(computeStreak(s.netuid));
                   return `
                     <tr>
                       <td><span class="scr-sn-tag">SN${s.netuid}</span>${s.name}${isRisk ? '<span class="scr-flag risk">deregistration risk</span>' : ''}${isProtected ? '<span class="scr-flag protected">bottom-ranked, immune</span>' : ''}${isHot ? '<span class="scr-flag hot">momentum</span>' : ''}</td>
@@ -1400,6 +1599,8 @@
                       <td class="num mono">${fmtCompactUsd(s.liquidityUsd)}</td>
                       <td class="num mono" ${deltaClass24}>${fmtPct(s.change24h)}</td>
                       <td class="num mono" ${deltaClass7}>${fmtPct(s.change7d)}</td>
+                      <td class="num mono" style="color:${flow1d.color}">${flow1d.label}</td>
+                      <td class="num mono" style="color:${streak.color}" title="${(streak.title || '').replace(/"/g, '&quot;')}">${streak.label}</td>
                       <td class="num mono">${fmtRatio(s.buySellRatio)}</td>
                       <td class="num mono">${s.rank !== null ? s.rank : '—'}</td>
                     </tr>
@@ -1414,9 +1615,9 @@
 
       <div class="scr-footnote">
         ${state.viewMode === 'new' ? `
-          Showing subnets registered in the last ${state.newListingDays} days, sorted youngest-first by default. Price/market cap moves on subnets this new mostly reflect early, thin-liquidity price discovery rather than the kind of trend the "momentum" flag captures elsewhere — read 24h% and Buy/Sell ratio (net accumulation vs. distribution) as more meaningful here than longer-window percentages. All are inside their ~4-month registration immunity, so deregistration is not a near-term risk regardless of rank. This view can't yet show whether liquidity is growing or shrinking day-over-day — that needs price history across multiple syncs, which isn't tracked yet. Excludes Root (SN0). Not financial advice.
+          Showing subnets registered in the last ${state.newListingDays} days, sorted youngest-first by default. Price/market cap moves on subnets this new mostly reflect early, thin-liquidity price discovery rather than the kind of trend the "momentum" flag captures elsewhere — read 24h% and Buy/Sell ratio (net accumulation vs. distribution) as more meaningful here than longer-window percentages. "Net flow (24h)" is real net Tao inflow/outflow from taostats, not a price-derived proxy \u2014 under Bittensor's flow-based emission model, sustained outflow is what actually drives a subnet toward reduced emissions, regardless of what price is doing. ${state.flowDataAvailable ? '' : 'Flow data did not load this sync, so net flow is shown as unknown for all subnets this time \u2014 try syncing again. '}"Flow streak" counts consecutive synced readings in the same direction, built from your own sync history (saved in this browser, 180-day / 2,000-snapshot rolling window per subnet) \u2014 it only goes as far back as when you started tracking on this device/browser, shown honestly as "tracking starts now" for anything new rather than a fake streak. All are inside their ~4-month registration immunity, so deregistration is not a near-term risk regardless of rank. This view can't yet show whether liquidity is growing or shrinking day-over-day — that needs price history across multiple syncs, which isn't tracked yet. Excludes Root (SN0). Not financial advice.
         ` : `
-          All figures live via the taostats API, excluding the Root network (SN0), which isn't an investable Alpha token. "Deregistration risk" flags subnets ranked in the bottom 10 that are NOT inside their ~4-month registration immunity window — taostats deregisters the lowest-ranked eligible subnet whenever a new one registers, so this is a real mechanical risk, not a prediction. Bottom-ranked subnets still inside immunity show "bottom-ranked, immune" instead, since they can't actually be deregistered yet. ${state.immunityDataAvailable ? '' : 'Registration-date data did not load this sync, so immunity status is currently unknown for all subnets and every bottom-10 subnet is shown as at-risk by default — treat this as a conservative upper bound, not confirmed risk. '}"Momentum" flags subnets older than 21 days beating the cohort's own median 7-day move by 15+ points, recalculated every sync — newer subnets are excluded from this flag since their 7d window mostly predates their own listing, and have their own dedicated view instead. It can still reflect genuine traction or thin-liquidity volatility — check liquidity before reading too much into it. This is not financial advice.
+          All figures live via the taostats API, excluding the Root network (SN0), which isn't an investable Alpha token. "Deregistration risk" flags subnets ranked in the bottom 10 that are NOT inside their ~4-month registration immunity window — taostats deregisters the lowest-ranked eligible subnet whenever a new one registers, so this is a real mechanical risk, not a prediction. Bottom-ranked subnets still inside immunity show "bottom-ranked, immune" instead, since they can't actually be deregistered yet. ${state.immunityDataAvailable ? '' : 'Registration-date data did not load this sync, so immunity status is currently unknown for all subnets and every bottom-10 subnet is shown as at-risk by default — treat this as a conservative upper bound, not confirmed risk. '}"Net flow (24h)" is real net Tao inflow/outflow into the subnet's pool, sourced directly from taostats \u2014 distinct from price momentum, and arguably more important under the post-Taoflow emission model, since sustained net outflow is what actually drives emissions toward zero, independent of price. ${state.flowDataAvailable ? '' : 'Flow data did not load this sync, so net flow is shown as unknown for all subnets this time \u2014 try syncing again. '}"Flow streak" counts consecutive synced readings in the same direction, built from your own accumulated sync history (saved in this browser via localStorage, 180-day / 2,000-snapshot rolling window per subnet \u2014 tied to this browser/device, not synced elsewhere) \u2014 it reflects how long you've personally been tracking each subnet here, not a longer history we don't actually have; "tracking starts now" means exactly that. "Momentum" flags subnets older than 21 days beating the cohort's own median 7-day move by 15+ points, recalculated every sync — newer subnets are excluded from this flag since their 7d window mostly predates their own listing, and have their own dedicated view instead. It can still reflect genuine traction or thin-liquidity volatility — check liquidity before reading too much into it. This is not financial advice.
         `}
         <span style="color:var(--amber); cursor:pointer; margin-left:8px;" id="scr-debug-toggle">${state.showDebug ? 'hide raw response' : 'show raw response'}</span>
       </div>
@@ -1437,9 +1638,12 @@
     root.querySelectorAll('th[data-sort]').forEach(th => {
       th.onclick = () => setSort(th.getAttribute('data-sort'));
     });
+    const exportBtn = document.getElementById('scr-export-flow-btn');
+    if (exportBtn) exportBtn.onclick = () => exportFlowHistory();
   }
 
   render();
+  loadFlowHistory().then(() => render());
 })();
 </script>
 </div>
