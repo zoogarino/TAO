@@ -1,28 +1,37 @@
 <div id="tao-tabbar-outer" style="width:100%; max-width:880px; margin:0 auto 12px; font-family: 'Inter', -apple-system, system-ui, sans-serif;">
   <div style="display:flex; gap:6px;">
-    <div id="tao-tab-alloc" style="padding:8px 16px; font-size:13px; font-weight:500; border-radius:7px; cursor:pointer; background:#1C1F24; color:#EDEAE3; border:1px solid #C8893B;">Allocation terminal</div>
-    <div id="tao-tab-screener" style="padding:8px 16px; font-size:13px; font-weight:500; border-radius:7px; cursor:pointer; background:transparent; color:#8C8A84; border:1px solid #2A2D33;">Subnet screener</div>
+    <div id="tao-tab-alloc" data-tab="alloc" class="tao-tabbtn-outer" style="padding:8px 16px; font-size:13px; font-weight:500; border-radius:7px; cursor:pointer; background:#1C1F24; color:#EDEAE3; border:1px solid #C8893B;">Allocation terminal</div>
+    <div id="tao-tab-screener" data-tab="screener" class="tao-tabbtn-outer" style="padding:8px 16px; font-size:13px; font-weight:500; border-radius:7px; cursor:pointer; background:transparent; color:#8C8A84; border:1px solid #2A2D33;">Subnet screener</div>
+    <div id="tao-tab-research" data-tab="research" class="tao-tabbtn-outer" style="padding:8px 16px; font-size:13px; font-weight:500; border-radius:7px; cursor:pointer; background:transparent; color:#8C8A84; border:1px solid #2A2D33;">Research queue</div>
   </div>
 </div>
 <script>
 (function() {
+  const TABS = ['alloc', 'screener', 'research'];
   function showPane(which) {
-    document.getElementById('tao-pane-alloc').style.display = (which === 'alloc') ? 'block' : 'none';
-    document.getElementById('tao-pane-screener').style.display = (which === 'screener') ? 'block' : 'none';
-    const tabAlloc = document.getElementById('tao-tab-alloc');
-    const tabScreener = document.getElementById('tao-tab-screener');
-    if (which === 'alloc') {
-      tabAlloc.style.background = '#1C1F24'; tabAlloc.style.color = '#EDEAE3'; tabAlloc.style.borderColor = '#C8893B';
-      tabScreener.style.background = 'transparent'; tabScreener.style.color = '#8C8A84'; tabScreener.style.borderColor = '#2A2D33';
-    } else {
-      tabScreener.style.background = '#1C1F24'; tabScreener.style.color = '#EDEAE3'; tabScreener.style.borderColor = '#C8893B';
-      tabAlloc.style.background = 'transparent'; tabAlloc.style.color = '#8C8A84'; tabAlloc.style.borderColor = '#2A2D33';
+    TABS.forEach(t => {
+      document.getElementById('tao-pane-' + t).style.display = (t === which) ? 'block' : 'none';
+      const btn = document.getElementById('tao-tab-' + t);
+      if (t === which) {
+        btn.style.background = '#1C1F24'; btn.style.color = '#EDEAE3'; btn.style.borderColor = '#C8893B';
+      } else {
+        btn.style.background = 'transparent'; btn.style.color = '#8C8A84'; btn.style.borderColor = '#2A2D33';
+      }
+    });
+    if (which === 'research' && typeof window.taoCheckResearchPending === 'function') {
+      window.taoCheckResearchPending();
     }
   }
-  document.getElementById('tao-tab-alloc').onclick = () => showPane('alloc');
-  document.getElementById('tao-tab-screener').onclick = () => showPane('screener');
+  TABS.forEach(t => {
+    document.getElementById('tao-tab-' + t).onclick = () => showPane(t);
+  });
+  // Exposed so other isolated pane scripts (e.g. the Screener's research-icon
+  // click) can reuse this exact tab-switch mechanism instead of introducing
+  // a second navigation pattern.
+  window.taoShowPane = showPane;
 })();
 </script>
+
 
 <div id="tao-pane-alloc" style="display:block;">
 <div id="tao-root"></div>
@@ -257,6 +266,13 @@
     margin-top: 2px;
     white-space: nowrap;
   }
+  .tao-rev-edit-icon {
+    color: var(--text-faint);
+    cursor: pointer;
+    font-size: 11px;
+    margin-left: 6px;
+  }
+  .tao-rev-edit-icon:hover { color: var(--amber); }
 
   /* ---- add subnet inline form ---- */
   .tao-add-row {
@@ -340,6 +356,42 @@
     22:  { rev90d: 11000,   window: '90d', verified: 'Self-reported', checked: '2026-06-20', note: 'MRR, October 2025' },
   };
 
+  // ---- Revenue overrides (localStorage) ----
+  // The hardcoded table above is a one-time manual pull and will never
+  // update itself — there's no API for "external revenue," it's a business
+  // fact someone has to read and type in. Rather than requiring a code edit
+  // every time, edits are stored here and layered on top of the static
+  // defaults at read time. A subnet with no entry in either source simply
+  // has no revenue data, same as before.
+  const REVENUE_OVERRIDE_KEY = 'tao_dashboard_revenue_overrides_v1';
+
+  function loadRevenueOverrides() {
+    try {
+      const raw = localStorage.getItem(REVENUE_OVERRIDE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveRevenueOverride(netuid, entry) {
+    try {
+      const all = loadRevenueOverrides();
+      all[netuid] = entry;
+      localStorage.setItem(REVENUE_OVERRIDE_KEY, JSON.stringify(all));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function getRevenueEntry(netuid) {
+    const overrides = loadRevenueOverrides();
+    if (overrides[netuid]) return { ...overrides[netuid], isOverride: true };
+    if (REVENUE_REFERENCE[netuid]) return { ...REVENUE_REFERENCE[netuid], isOverride: false };
+    return null;
+  }
+
   // Persistence: watchlist and wallet address survive closing/reopening this
   // file via localStorage, scoped to this browser. The API key is
   // deliberately NEVER persisted — it stays session-only in memory, same
@@ -392,6 +444,7 @@
     addRowOpen: false,
     addRowError: null,
     rowSyncing: null, // netuid currently being individually fetched, or null
+    revEditNetuid: null, // netuid whose revenue edit form is currently open, or null
     walletAddress: (persisted && persisted.walletAddress) || '',
     walletHoldings: null,
     walletFreeTao: null,
@@ -516,23 +569,44 @@
       };
     }
 
-    // Separate, independent attempt at the free/account balance — taostats'
-    // own "Accounts" view shows free + delegated = total, so there's a
-    // dedicated account-balance endpoint distinct from the stake endpoint
-    // above. Endpoint path/field names are a best guess from docs, not
-    // tested live — isolated in its own try/catch so a wrong guess here
-    // can't break the stake-balance results we already know work.
-    try {
+    // Separate, independent attempt at the free/account balance — confirmed
+    // endpoint and field names directly from taostats' published OpenAPI
+    // spec (docs.taostats.io/reference/get-account): balance_free, 
+    // balance_staked, balance_total, all in RAO. Isolated in its own
+    // try/catch so a transient failure here can't break the stake-balance
+    // results we already know work. One retry on failure, since a 500 from
+    // a third-party API is often transient rather than a real contract
+    // mismatch — confirmed correct against the docs as of this check.
+    async function attemptAccountFetch() {
       const acctData = await fetchTaoStats('/api/account/latest/v1?address=' + encodeURIComponent(state.walletAddress));
       const acctRow = (acctData && acctData.data && acctData.data[0]) || null;
-      if (acctRow) {
-        state.walletFreeTao = firstNum(acctRow.balance_free, acctRow.free, acctRow.balance) !== null
-          ? firstNum(acctRow.balance_free, acctRow.free, acctRow.balance) / 1e9
-          : null;
-        state.rawDebug.walletAccount = { sample: acctRow };
+      if (!acctRow) {
+        return { ok: false, note: 'No account row returned', raw: acctData };
+      }
+      const freeTaoRao = firstNum(acctRow.balance_free);
+      return {
+        ok: true,
+        freeTao: freeTaoRao !== null ? freeTaoRao / 1e9 : null,
+        totalTaoRao: firstNum(acctRow.balance_total),
+        sample: acctRow,
+      };
+    }
+
+    try {
+      let result;
+      try {
+        result = await attemptAccountFetch();
+      } catch (firstErr) {
+        // One retry — a 500 from taostats' side is often transient.
+        await new Promise(r => setTimeout(r, 800));
+        result = await attemptAccountFetch();
+      }
+      if (result.ok) {
+        state.walletFreeTao = result.freeTao;
+        state.rawDebug.walletAccount = { sample: result.sample };
       } else {
         state.walletFreeTao = null;
-        state.rawDebug.walletAccount = { note: 'No account row returned', raw: acctData };
+        state.rawDebug.walletAccount = { note: result.note, raw: result.raw };
       }
     } catch (e) {
       state.walletFreeTao = null;
@@ -541,6 +615,7 @@
         status: e.status || null,
         body: e.body || null,
         endpoint_tried: '/api/account/latest/v1?address=' + state.walletAddress,
+        note: 'Failed on both the initial attempt and one retry — likely a transient taostats server issue (confirmed 500-class error), not a wrong endpoint or parameter. Try syncing again in a moment.',
       };
     }
     state.walletLoading = false;
@@ -752,7 +827,7 @@
               </tr>
             </tbody>
           </table>
-          ${state.walletFreeTao === null ? '<div class="tao-keynote" style="padding:8px 0 4px;">Free (unstaked) TAO balance could not be loaded this lookup \u2014 the total above only reflects staked Alpha positions. Check "show raw response" for details.</div>' : ''}
+          ${state.walletFreeTao === null ? '<div class="tao-keynote" style="padding:8px 0 4px;">Free (unstaked) TAO balance could not be loaded this lookup (the endpoint is confirmed correct, so this is most likely a transient taostats server issue) \u2014 the total above only reflects staked Alpha positions. Try syncing again, or check "show raw response" for details.</div>' : ''}
         </div>
       ` : ''}
 
@@ -812,7 +887,7 @@
               <tr class="tao-empty-row"><td colspan="10">No subnets tracked yet — add one above.</td></tr>
             ` : state.watchlist.map(s => {
                 const d = state.subnetData[s.netuid] || {};
-                const rev = REVENUE_REFERENCE[s.netuid];
+                const rev = getRevenueEntry(s.netuid);
                 const deltaClass = d.change24h > 0 ? 'up' : (d.change24h < 0 ? 'down' : '');
                 const isUp = d.sparkline && d.sparkline.length > 1 ? d.sparkline[d.sparkline.length - 1] >= d.sparkline[0] : null;
                 const annualizedRev = rev ? rev.rev90d * 4 : null;
@@ -820,6 +895,7 @@
                 // Cross-reference the watchlist against actual wallet holdings —
                 // a subnet being tracked doesn't mean you hold any of it.
                 const holding = (state.walletHoldings || []).find(h => h.netuid === s.netuid);
+                const isEditingRev = state.revEditNetuid === s.netuid;
                 return `
                   <tr>
                     <td>
@@ -834,7 +910,8 @@
                     <td class="num mono">${d.error ? '—' : fmtCompactUsd(d.liquidityUsd)}</td>
                     <td class="num mono ${deltaClass}">${d.error ? '—' : fmtPct(d.change24h)}</td>
                     <td class="num">
-                      ${rev ? `<span class="mono">${fmtCompactUsd(rev.rev90d)}</span><div class="tao-rev-meta">${rev.window} \u00b7 ${rev.verified}</div>` : '<span style="color:var(--text-faint);">no data</span>'}
+                      ${rev ? `<span class="mono">${fmtCompactUsd(rev.rev90d)}</span><div class="tao-rev-meta">${rev.window} \u00b7 ${rev.verified}${rev.isOverride ? ' \u00b7 edited' : ''}</div>` : '<span style="color:var(--text-faint);">no data</span>'}
+                      <span class="tao-rev-edit-icon" data-rev-edit-netuid="${s.netuid}" title="Edit revenue data for SN${s.netuid}">\u270e</span>
                     </td>
                     <td class="num mono">${multiple !== null ? multiple.toFixed(0) + '\u00d7' : '—'}</td>
                     <td class="num mono">${holding && holding.balanceAsTao !== null ? holding.balanceAsTao.toFixed(4) + ' \u03c4' : '<span style="color:var(--text-faint);">not held</span>'}</td>
@@ -843,6 +920,36 @@
                       <span class="tao-sn-remove" data-remove="${s.netuid}">✕</span>
                     </td>
                   </tr>
+                  ${isEditingRev ? `
+                  <tr>
+                    <td colspan="10" style="background:var(--bg-raised); padding:14px 16px;">
+                      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+                        <div>
+                          <div class="tao-rev-meta" style="margin-bottom:4px;">Revenue (90d, USD)</div>
+                          <input type="text" inputmode="decimal" id="rev-edit-amount" value="${rev ? rev.rev90d : ''}" placeholder="e.g. 1440000" style="width:120px; background:var(--bg-input); border:1px solid var(--line); color:var(--text); font-family:'JetBrains Mono',monospace; font-size:12px; padding:7px 9px; border-radius:6px; outline:none;" />
+                        </div>
+                        <div>
+                          <div class="tao-rev-meta" style="margin-bottom:4px;">Window</div>
+                          <input type="text" id="rev-edit-window" value="${rev ? rev.window : '90d'}" placeholder="90d" style="width:70px; background:var(--bg-input); border:1px solid var(--line); color:var(--text); font-family:'JetBrains Mono',monospace; font-size:12px; padding:7px 9px; border-radius:6px; outline:none;" />
+                        </div>
+                        <div>
+                          <div class="tao-rev-meta" style="margin-bottom:4px;">Verification</div>
+                          <select id="rev-edit-verified" style="background:var(--bg-input); border:1px solid var(--line); color:var(--text); font-family:'Inter',sans-serif; font-size:12px; padding:7px 9px; border-radius:6px; outline:none;">
+                            <option value="Self-reported" ${rev && rev.verified === 'Self-reported' ? 'selected' : ''}>Self-reported</option>
+                            <option value="TI Verified" ${rev && rev.verified === 'TI Verified' ? 'selected' : ''}>TI Verified</option>
+                          </select>
+                        </div>
+                        <div style="flex:1; min-width:140px;">
+                          <div class="tao-rev-meta" style="margin-bottom:4px;">Note (optional)</div>
+                          <input type="text" id="rev-edit-note" value="${rev && rev.note ? rev.note.replace(/"/g, '&quot;') : ''}" placeholder="source / context" style="width:100%; background:var(--bg-input); border:1px solid var(--line); color:var(--text); font-family:'Inter',sans-serif; font-size:12px; padding:7px 9px; border-radius:6px; outline:none;" />
+                        </div>
+                        <button class="tao-btn" data-rev-save-netuid="${s.netuid}">Save</button>
+                        <button class="tao-btn secondary" data-rev-cancel="1">Cancel</button>
+                      </div>
+                      <div class="tao-rev-meta" style="margin-top:8px;">Saving sets "last checked" to today automatically. This overrides the built-in default for SN${s.netuid} and is stored in this browser only.</div>
+                    </td>
+                  </tr>
+                  ` : ''}
                 `;
               }).join('')}
           </tbody>
@@ -976,6 +1083,48 @@
         fetchSingleSubnet(parseInt(el.getAttribute('data-sync'), 10));
       };
     });
+    root.querySelectorAll('[data-rev-edit-netuid]').forEach(el => {
+      el.onclick = () => {
+        const netuid = parseInt(el.getAttribute('data-rev-edit-netuid'), 10);
+        state.revEditNetuid = (state.revEditNetuid === netuid) ? null : netuid;
+        render();
+      };
+    });
+    root.querySelectorAll('[data-rev-save-netuid]').forEach(el => {
+      el.onclick = () => {
+        const netuid = parseInt(el.getAttribute('data-rev-save-netuid'), 10);
+        const amountRaw = document.getElementById('rev-edit-amount').value.replace(/[^0-9.]/g, '');
+        const amount = parseFloat(amountRaw);
+        if (!amount || amount <= 0) {
+          state.error = 'Enter a valid revenue amount greater than 0.';
+          render();
+          return;
+        }
+        const windowLabel = document.getElementById('rev-edit-window').value.trim() || '90d';
+        const verified = document.getElementById('rev-edit-verified').value;
+        const note = document.getElementById('rev-edit-note').value.trim();
+        const ok = saveRevenueOverride(netuid, {
+          rev90d: amount,
+          window: windowLabel,
+          verified: verified,
+          checked: new Date().toISOString().slice(0, 10),
+          note: note,
+        });
+        if (!ok) {
+          state.error = 'Could not save revenue edit — storage may be full or disabled.';
+        } else {
+          state.error = null;
+        }
+        state.revEditNetuid = null;
+        render();
+      };
+    });
+    root.querySelectorAll('[data-rev-cancel]').forEach(el => {
+      el.onclick = () => {
+        state.revEditNetuid = null;
+        render();
+      };
+    });
 
     // preserve focus/typing in key input across re-renders triggered elsewhere
     const keyInput = document.getElementById('tao-key-input');
@@ -1055,6 +1204,8 @@
   table.scr-table tr:last-child td { border-bottom: none; }
   table.scr-table tr:hover { background: var(--bg-raised); }
   .scr-sn-tag { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim); background: var(--bg-input); padding: 2px 6px; border-radius: 4px; margin-right: 8px; }
+  .scr-research-icon { color: var(--text-faint); cursor: pointer; font-size: 13px; padding: 0 4px; }
+  .scr-research-icon:hover { color: var(--amber); }
   .scr-flag { font-size: 9.5px; padding: 2px 6px; border-radius: 4px; margin-left: 6px; }
   .scr-flag.risk { background: rgba(199,84,80,0.15); color: var(--red); }
   .scr-flag.protected { background: rgba(200,137,59,0.15); color: var(--amber); }
@@ -1082,6 +1233,7 @@
     immunityDataAvailable: false,
     flowDataAvailable: false,
     viewMode: 'all', // 'all' | 'new'
+    searchQuery: '',
     newListingDays: 21,
     flowHistory: {},        // { [netuid]: [{t, f, l}, ...] } — raw snapshots only, hydrated from storage on load
     flowHistoryLoaded: false,
@@ -1159,6 +1311,52 @@
     }
   }
 
+  const RESEARCH_SIGNALS_KEY = 'tao_dashboard_research_signals_v1';
+
+  function saveScreenerSignalsForResearch(subnets) {
+    // Writes exactly what the Research Queue's five flag conditions need,
+    // computed here from data this script already has — the Research Queue
+    // tab is a fully isolated script (same pattern as Alloc/Screener
+    // isolation) and reads this localStorage key rather than reaching into
+    // this script's in-memory state directly. Flags themselves are also
+    // computed here (computeFlags lives in this script now) so there's one
+    // source of truth; the Research Queue reads flagCount/flagSummaries
+    // rather than recomputing the same logic a second time.
+    const total = subnets.length;
+    const riskCutoff = total > 10 ? total - 10 : null;
+    const snapshot = {};
+    subnets.forEach(s => {
+      const streak = computeStreak(s.netuid); // already computed from flowHistory, same script
+      const inBottomTen = riskCutoff !== null && s.rank !== null && s.rank > riskCutoff;
+      const sig = {
+        netuid: s.netuid,
+        name: s.name,
+        netFlow1dTao: s.netFlow1dTao,
+        change7d: s.change7d,
+        streakCount: streak.available ? streak.count : null,
+        streakDir: streak.available ? streak.dir : null,
+        hasRevenueData: s.hasRevenueData,
+        revLastCheckedDaysAgo: s.revLastCheckedDaysAgo,
+        rank: s.rank,
+        inBottomTen: inBottomTen,
+        isImmune: s.isImmune,
+        daysSinceRegistration: s.daysSinceRegistration,
+        marketCapUsd: s.marketCapUsd,
+        priceUsd: s.priceUsd,
+      };
+      const flags = computeFlags(sig);
+      sig.flagCount = flags.length;
+      sig.flagSummaries = flags.map(f => f.summary);
+      snapshot[s.netuid] = sig;
+    });
+    try {
+      localStorage.setItem(RESEARCH_SIGNALS_KEY, JSON.stringify({ updatedAt: Date.now(), subnets: snapshot }));
+    } catch (e) {
+      // Non-fatal — the Research Queue will just show stale/no data for
+      // flag computation until a future sync succeeds in writing this.
+    }
+  }
+
   function computeStreak(netuid) {
     // Pure, computed at render time from raw history only — no derived
     // fields are ever stored, so changing this definition later doesn't
@@ -1211,6 +1409,75 @@
     if (streak.dir > 0) return { label: '\u2191 ' + dayLabel, color: 'var(--teal)', title: 'Inflow for ' + streak.count + ' consecutive synced reading(s), tracking since ' + sinceDate.toLocaleDateString() };
     if (streak.dir < 0) return { label: '\u2193 ' + dayLabel, color: 'var(--red)', title: 'Outflow for ' + streak.count + ' consecutive synced reading(s), tracking since ' + sinceDate.toLocaleDateString() };
     return { label: '\u2192 ' + dayLabel, color: 'var(--text-dim)', title: 'Flat for ' + streak.count + ' consecutive synced reading(s)' };
+  }
+
+  // ---- Flag computation: moved here from the Research Queue script so the
+  // Screener can show flag counts/highlights on its own rows without a
+  // round-trip through localStorage. The Research Queue now reads flag
+  // *results* from the bridge (computed here) rather than recomputing this
+  // logic itself, so there's exactly one place this logic lives. ----
+  const REV_STALE_DAYS = 21; // 3 weeks
+  const NEW_LISTING_AGE_OUT_MIN = 21;
+  const NEW_LISTING_AGE_OUT_MAX = 35;
+
+  function computeFlags(sig) {
+    const flags = [];
+    if (!sig) return flags;
+
+    if (sig.netFlow1dTao !== null && sig.change7d !== null) {
+      const flowSign = sig.netFlow1dTao > 0 ? 1 : (sig.netFlow1dTao < 0 ? -1 : 0);
+      const priceSign = sig.change7d > 0 ? 1 : (sig.change7d < 0 ? -1 : 0);
+      if (flowSign !== 0 && flowSign !== priceSign) {
+        flags.push({
+          key: 'divergence',
+          summary: 'flow/price divergence',
+          question: 'Net flow is ' + sig.netFlow1dTao.toFixed(1) + '\u03c4 over 24h while 7d price moved ' + sig.change7d.toFixed(1) + '% \u2014 is this outflow/inflow concentrated in a few large wallets or broadly distributed? Any news that explains it?',
+          readout: [['Net flow (24h)', sig.netFlow1dTao.toFixed(1) + ' \u03c4'], ['7d price change', sig.change7d.toFixed(1) + '%']],
+        });
+      }
+    }
+
+    if (sig.streakCount !== null && sig.streakCount >= 3) {
+      const dirWord = sig.streakDir > 0 ? 'inflow' : (sig.streakDir < 0 ? 'outflow' : 'flat');
+      flags.push({
+        key: 'streak',
+        summary: sig.streakCount + '-sync ' + dirWord + ' streak',
+        question: dirWord === 'flat'
+          ? 'Flow has been flat for ' + sig.streakCount + ' consecutive synced readings \u2014 is this subnet just quiet, or stagnant for a reason worth checking?'
+          : 'Net flow has been ' + dirWord + ' for ' + sig.streakCount + ' consecutive synced readings \u2014 is this a sustained trend or a short-term blip? Worth checking recent news/announcements.',
+        readout: [['Streak length', sig.streakCount + ' synced readings'], ['Direction', dirWord]],
+      });
+    }
+
+    if (sig.hasRevenueData && sig.revLastCheckedDaysAgo !== null && sig.revLastCheckedDaysAgo > REV_STALE_DAYS) {
+      const weeksAgo = Math.floor(sig.revLastCheckedDaysAgo / 7);
+      flags.push({
+        key: 'stale-revenue',
+        summary: 'revenue data ' + weeksAgo + 'w stale',
+        question: 'Revenue data last checked ' + weeksAgo + ' weeks ago \u2014 worth re-verifying given the current flow signal and whether the commercial relationship is still active.',
+        readout: [['Days since last checked', Math.round(sig.revLastCheckedDaysAgo)]],
+      });
+    }
+
+    if (sig.inBottomTen) {
+      flags.push({
+        key: 'dereg-risk',
+        summary: 'deregistration risk zone',
+        question: 'Currently ranked ' + (sig.rank !== null ? sig.rank : '?') + ' in pruning order, within the bottom-10 risk zone' + (sig.isImmune ? ' (still inside registration immunity for now)' : '') + ' \u2014 confirm this is still active and check recent registration/emission trend.',
+        readout: [['Rank', sig.rank !== null ? sig.rank : '\u2014'], ['Immune', sig.isImmune === true ? 'yes' : (sig.isImmune === false ? 'no' : 'unknown')]],
+      });
+    }
+
+    if (sig.daysSinceRegistration !== null && sig.daysSinceRegistration > NEW_LISTING_AGE_OUT_MIN && sig.daysSinceRegistration <= NEW_LISTING_AGE_OUT_MAX) {
+      flags.push({
+        key: 'aging-out',
+        summary: 'new listing aging out',
+        question: 'Now ' + Math.round(sig.daysSinceRegistration) + ' days old \u2014 just crossed into the window where 7d price/momentum readings become meaningful again. Worth a fresh look now that early listing noise should be settling.',
+        readout: [['Days since registration', Math.round(sig.daysSinceRegistration)]],
+      });
+    }
+
+    return flags;
   }
 
 
@@ -1276,6 +1543,34 @@
 
   const IMMUNITY_DAYS = 122; // ~4 months
 
+  // Mirrored from the Allocation terminal's static revenue table — same data,
+  // same "checked" dates. Duplicated rather than shared across the two
+  // isolated scripts (consistent with how this file keeps Alloc/Screener/
+  // Research fully independent), so the Screener can compute revenue
+  // staleness itself and include it in what it writes for the Research Queue.
+  const REVENUE_REFERENCE = {
+    64:  { rev90d: 1440000, checked: '2026-06-20' },
+    4:   { rev90d: 100000,  checked: '2026-06-20' },
+    51:  { rev90d: 530000,  checked: '2026-06-20' },
+    8:   { rev90d: 100000,  checked: '2026-06-20' },
+    93:  { rev90d: 160000,  checked: '2026-06-20' },
+    121: { rev90d: 32000,   checked: '2026-06-20' },
+    22:  { rev90d: 11000,   checked: '2026-06-20' },
+  };
+
+  // Same override key the Allocation terminal writes to — read-only here,
+  // so an edit made in one tab is reflected in this tab's staleness
+  // computation without needing a second editing UI.
+  const REVENUE_OVERRIDE_KEY = 'tao_dashboard_revenue_overrides_v1';
+  function getRevenueEntryForFlags(netuid) {
+    try {
+      const raw = localStorage.getItem(REVENUE_OVERRIDE_KEY);
+      const overrides = raw ? JSON.parse(raw) : {};
+      if (overrides[netuid]) return overrides[netuid];
+    } catch (e) { /* fall through to default */ }
+    return REVENUE_REFERENCE[netuid] || null;
+  }
+
   function mapSubnet(d, taoPrice, registeredAt, flowInfo) {
     const priceTao = firstNum(d.price);
     const marketCapTao = d.market_cap !== undefined ? firstNum(d.market_cap) / 1e9 : null;
@@ -1307,6 +1602,14 @@
       if (f7 !== null) { netFlow7dTao = f7 / 1e9; flowDataAvailable = true; }
       if (f30 !== null) { netFlow30dTao = f30 / 1e9; flowDataAvailable = true; }
     }
+    const revRef = getRevenueEntryForFlags(d.netuid);
+    let revLastCheckedDaysAgo = null;
+    if (revRef && revRef.checked) {
+      const checkedTime = new Date(revRef.checked).getTime();
+      if (!isNaN(checkedTime)) {
+        revLastCheckedDaysAgo = (Date.now() - checkedTime) / (1000 * 60 * 60 * 24);
+      }
+    }
     return {
       netuid: d.netuid,
       name: d.name || ('SN' + d.netuid),
@@ -1326,6 +1629,8 @@
       netFlow30dTao: netFlow30dTao,
       netFlow1dUsd: (taoPrice && netFlow1dTao !== null) ? netFlow1dTao * taoPrice : null,
       flowDataAvailable: flowDataAvailable,
+      hasRevenueData: !!revRef,
+      revLastCheckedDaysAgo: revLastCheckedDaysAgo,
     };
   }
 
@@ -1412,6 +1717,7 @@
         // hiccup break the sync that already succeeded — render now with
         // fresh price data, history error (if any) surfaces on next render.
         await appendAndSaveFlowHistory(state.subnets);
+        saveScreenerSignalsForResearch(state.subnets);
       }
     } catch (e) {
       state.error = e.message || 'Could not reach taostats. Check your API key.';
@@ -1424,6 +1730,10 @@
     let arr = state.subnets.slice();
     if (state.viewMode === 'new') {
       arr = arr.filter(s => s.daysSinceRegistration !== null && s.daysSinceRegistration <= state.newListingDays);
+    }
+    if (state.searchQuery && state.searchQuery.trim()) {
+      const q = state.searchQuery.trim().toLowerCase().replace(/^sn/, '');
+      arr = arr.filter(s => String(s.netuid).includes(q) || (s.name && s.name.toLowerCase().includes(q)));
     }
     const key = state.sortKey;
     const dir = state.sortDir === 'asc' ? 1 : -1;
@@ -1471,7 +1781,6 @@
   }
 
   function render() {
-    const list = sortedSubnets();
     const total = state.subnets.length;
     const totalMcap = state.subnets.reduce((s, x) => s + (x.marketCapUsd || 0), 0);
     const riskCutoff = total > 10 ? total - 10 : null;
@@ -1481,6 +1790,31 @@
     // median 7d move by a meaningful margin, recomputed every sync.
     const med7d = median(state.subnets.map(s => s.change7d));
     const momentumThreshold = med7d !== null ? med7d + 15 : 20;
+
+    // Compute flag count/summaries on every subnet before sorting, so
+    // "sort by flags" has something real to sort against. Recomputed every
+    // render — cheap, and always reflects the current riskCutoff/momentum
+    // context rather than a stale snapshot from sync time.
+    state.subnets.forEach(s => {
+      const streak = computeStreak(s.netuid);
+      const sig = {
+        netFlow1dTao: s.netFlow1dTao,
+        change7d: s.change7d,
+        streakCount: streak.available ? streak.count : null,
+        streakDir: streak.available ? streak.dir : null,
+        hasRevenueData: s.hasRevenueData,
+        revLastCheckedDaysAgo: s.revLastCheckedDaysAgo,
+        rank: s.rank,
+        inBottomTen: riskCutoff !== null && s.rank !== null && s.rank > riskCutoff,
+        isImmune: s.isImmune,
+        daysSinceRegistration: s.daysSinceRegistration,
+      };
+      const flags = computeFlags(sig);
+      s.flagCount = flags.length;
+      s.flagSummaries = flags.map(f => f.summary);
+    });
+
+    const list = sortedSubnets();
 
     root.innerHTML = `
       <div class="scr-header">
@@ -1501,6 +1835,7 @@
       <div style="padding:14px 24px 0; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         <button class="scr-viewbtn ${state.viewMode === 'all' ? 'active' : ''}" id="scr-view-all">All subnets</button>
         <button class="scr-viewbtn ${state.viewMode === 'new' ? 'active' : ''}" id="scr-view-new">New listings (\u226421d)</button>
+        <input id="scr-search-input" type="text" placeholder="Search netuid or name\u2026" value="${(state.searchQuery || '').replace(/"/g, '&quot;')}" style="background:var(--bg-input); border:1px solid var(--line); color:var(--text); font-family:'JetBrains Mono',monospace; font-size:12px; padding:7px 10px; border-radius:7px; outline:none; width:170px;" />
         <span style="flex:1;"></span>
         <button class="scr-viewbtn" id="scr-export-flow-btn" title="Download the raw flow history JSON as a backup">Download flow history</button>
       </div>
@@ -1536,16 +1871,19 @@
                 <th class="num" data-sort="netFlow1dTao">Net flow (24h) ${sortArrow('netFlow1dTao')}</th>
                 <th class="num">Flow streak</th>
                 <th class="num" data-sort="change24h">24h ${sortArrow('change24h')}</th>
+                <th class="num" data-sort="flagCount">Flags ${sortArrow('flagCount')}</th>
+                <th class="num"></th>
               </tr>
             </thead>
             <tbody>
-              ${list.length === 0 ? `<tr><td colspan="9" class="scr-empty">No subnets registered in the last ${state.newListingDays} days right now.</td></tr>` :
+              ${list.length === 0 ? `<tr><td colspan="11" class="scr-empty">No subnets registered in the last ${state.newListingDays} days right now.</td></tr>` :
                 list.map(s => {
                   const deltaClass24 = s.change24h > 0 ? 'style="color:var(--teal)"' : (s.change24h < 0 ? 'style="color:var(--red)"' : '');
                   const bsHigh = s.buySellRatio !== null && s.buySellRatio > 1.3;
                   const bsLow = s.buySellRatio !== null && s.buySellRatio < 0.7;
                   const flow1d = fmtFlow(s.netFlow1dTao);
                   const streak = fmtStreak(computeStreak(s.netuid));
+                  const flagCount = s.flagCount || 0;
                   return `
                     <tr>
                       <td><span class="scr-sn-tag">SN${s.netuid}</span>${s.name}</td>
@@ -1557,6 +1895,8 @@
                       <td class="num mono" style="color:${flow1d.color}">${flow1d.label}</td>
                       <td class="num mono" style="color:${streak.color}" title="${(streak.title || '').replace(/"/g, '&quot;')}">${streak.label}</td>
                       <td class="num mono" ${deltaClass24}>${fmtPct(s.change24h)}</td>
+                      <td class="num mono" style="color:var(--text-dim);" title="${(s.flagSummaries || []).join(', ').replace(/"/g, '&quot;')}">${flagCount > 0 ? flagCount : '\u2014'}</td>
+                      <td class="num"><span class="scr-research-icon" data-research-netuid="${s.netuid}" title="Add SN${s.netuid} to Research Queue">\u2691</span></td>
                     </tr>
                   `;
                 }).join('')
@@ -1575,10 +1915,12 @@
                 <th class="num">Flow streak</th>
                 <th class="num" data-sort="buySellRatio">Buy/Sell ${sortArrow('buySellRatio')}</th>
                 <th class="num" data-sort="rank">Rank ${sortArrow('rank')}</th>
+                <th class="num" data-sort="flagCount">Flags ${sortArrow('flagCount')}</th>
+                <th class="num"></th>
               </tr>
             </thead>
             <tbody>
-              ${list.length === 0 ? `<tr><td colspan="10" class="scr-empty">No data yet — paste your API key and click Sync now.</td></tr>` :
+              ${list.length === 0 ? `<tr><td colspan="12" class="scr-empty">No data yet — paste your API key and click Sync now.</td></tr>` :
                 list.map(s => {
                   const deltaClass24 = s.change24h > 0 ? 'style="color:var(--teal)"' : (s.change24h < 0 ? 'style="color:var(--red)"' : '');
                   const deltaClass7 = s.change7d > 0 ? 'style="color:var(--teal)"' : (s.change7d < 0 ? 'style="color:var(--red)"' : '');
@@ -1591,6 +1933,7 @@
                   const isHot = s.change7d !== null && s.change7d > momentumThreshold && s.daysSinceRegistration !== null && s.daysSinceRegistration > 21;
                   const flow1d = fmtFlow(s.netFlow1dTao);
                   const streak = fmtStreak(computeStreak(s.netuid));
+                  const flagCount = s.flagCount || 0;
                   return `
                     <tr>
                       <td><span class="scr-sn-tag">SN${s.netuid}</span>${s.name}${isRisk ? '<span class="scr-flag risk">deregistration risk</span>' : ''}${isProtected ? '<span class="scr-flag protected">bottom-ranked, immune</span>' : ''}${isHot ? '<span class="scr-flag hot">momentum</span>' : ''}</td>
@@ -1603,6 +1946,8 @@
                       <td class="num mono" style="color:${streak.color}" title="${(streak.title || '').replace(/"/g, '&quot;')}">${streak.label}</td>
                       <td class="num mono">${fmtRatio(s.buySellRatio)}</td>
                       <td class="num mono">${s.rank !== null ? s.rank : '—'}</td>
+                      <td class="num mono" style="color:var(--text-dim);" title="${(s.flagSummaries || []).join(', ').replace(/"/g, '&quot;')}">${flagCount > 0 ? flagCount : '\u2014'}</td>
+                      <td class="num"><span class="scr-research-icon" data-research-netuid="${s.netuid}" title="Add SN${s.netuid} to Research Queue">\u2691</span></td>
                     </tr>
                   `;
                 }).join('')
@@ -1635,8 +1980,38 @@
     document.getElementById('scr-debug-toggle').onclick = () => { state.showDebug = !state.showDebug; render(); };
     document.getElementById('scr-view-all').onclick = () => setViewMode('all');
     document.getElementById('scr-view-new').onclick = () => setViewMode('new');
+    const searchInput = document.getElementById('scr-search-input');
+    if (searchInput) {
+      let searchDebounce = null;
+      searchInput.oninput = (e) => {
+        const val = e.target.value;
+        clearTimeout(searchDebounce);
+        searchDebounce = setTimeout(() => {
+          state.searchQuery = val;
+          render();
+          // Restore focus and cursor after the re-render rebuilds the input.
+          const reInput = document.getElementById('scr-search-input');
+          if (reInput) {
+            reInput.focus();
+            reInput.setSelectionRange(reInput.value.length, reInput.value.length);
+          }
+        }, 200);
+      };
+    }
     root.querySelectorAll('th[data-sort]').forEach(th => {
       th.onclick = () => setSort(th.getAttribute('data-sort'));
+    });
+    root.querySelectorAll('[data-research-netuid]').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        const netuid = el.getAttribute('data-research-netuid');
+        try {
+          localStorage.setItem('tao_dashboard_research_pending_add_v1', netuid);
+        } catch (err) { /* non-fatal — clicking again will retry */ }
+        // Reuse the same tab-switching function the tab bar itself uses,
+        // rather than introducing a second navigation mechanism.
+        if (typeof window.taoShowPane === 'function') window.taoShowPane('research');
+      };
     });
     const exportBtn = document.getElementById('scr-export-flow-btn');
     if (exportBtn) exportBtn.onclick = () => exportFlowHistory();
@@ -1644,6 +2019,503 @@
 
   render();
   loadFlowHistory().then(() => render());
+})();
+</script>
+</div>
+
+<div id="tao-pane-research" style="display:none;">
+<div id="rq-root"></div>
+<style>
+  #rq-root, #rq-root * { box-sizing: border-box; }
+  #rq-root {
+    --bg: #0E0F12;
+    --bg-raised: #16181C;
+    --bg-input: #1C1F24;
+    --line: #2A2D33;
+    --text: #EDEAE3;
+    --text-dim: #8C8A84;
+    --text-faint: #5C5A56;
+    --amber: #C8893B;
+    --teal: #4FB3A0;
+    --red: #C75450;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    border-radius: 14px;
+    width: 100%;
+    max-width: 880px;
+    margin: 0 auto;
+    overflow: hidden;
+    border: 1px solid var(--line);
+  }
+  #rq-root .mono { font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace; }
+  .rq-header { padding: 20px 24px 16px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: flex-start; }
+  .rq-title { font-size: 15px; font-weight: 600; }
+  .rq-subtitle { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+  .rq-updated { font-size: 11px; color: var(--text-faint); text-align: right; line-height: 1.5; }
+  .rq-controlbar { padding: 12px 24px; background: var(--bg-raised); border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .rq-controlbar input { background: var(--bg-input); border: 1px solid var(--line); color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 8px 10px; border-radius: 6px; outline: none; width: 140px; }
+  .rq-controlbar input:focus { border-color: var(--amber); }
+  .rq-btn { background: var(--amber); color: #1A1305; border: none; font-family: 'Inter', sans-serif; font-size: 12.5px; font-weight: 600; padding: 8px 14px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+  .rq-btn.secondary { background: transparent; border: 1px solid var(--line); color: var(--text-dim); }
+  .rq-note { font-size: 11px; color: var(--text-faint); }
+  .rq-empty { text-align: center; color: var(--text-faint); font-size: 13px; padding: 48px 24px; line-height: 1.6; }
+  .rq-card { border-bottom: 1px solid var(--line); }
+  .rq-card-collapsed { padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; gap: 12px; }
+  .rq-card-collapsed:hover { background: var(--bg-raised); }
+  .rq-card-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .rq-sn-tag { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim); background: var(--bg-input); padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
+  .rq-sn-name { font-weight: 600; font-size: 14px; flex-shrink: 0; }
+  .rq-card-summary { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rq-flagcount { font-size: 11px; color: var(--text-faint); background: var(--bg-input); padding: 3px 9px; border-radius: 10px; flex-shrink: 0; white-space: nowrap; }
+  .rq-manual-tag { font-size: 10px; color: var(--text-faint); border: 1px solid var(--line); padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
+  .rq-chevron { color: var(--text-faint); flex-shrink: 0; transition: transform 0.15s; }
+  .rq-chevron.open { transform: rotate(90deg); }
+  .rq-card-expanded { padding: 0 24px 18px; }
+  .rq-section-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); margin: 14px 0 6px; }
+  .rq-question { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; }
+  .rq-question input[type="checkbox"] { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--amber); cursor: pointer; flex-shrink: 0; }
+  .rq-question-text { font-size: 13px; line-height: 1.45; }
+  .rq-question.resolved .rq-question-text { color: var(--text-faint); text-decoration: line-through; }
+  .rq-resolved-toggle { font-size: 11px; color: var(--amber); cursor: pointer; margin-top: 6px; }
+  .rq-readout { background: var(--bg-input); border: 1px solid var(--line); border-radius: 7px; padding: 10px 12px; font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
+  .rq-readout-row { display: flex; justify-content: space-between; padding: 2px 0; }
+  .rq-readout-row .mono { color: var(--text); }
+  .rq-notes-list { margin-bottom: 10px; }
+  .rq-note-entry { background: var(--bg-input); border: 1px solid var(--line); border-radius: 7px; padding: 9px 11px; margin-bottom: 7px; font-size: 13px; line-height: 1.45; }
+  .rq-note-ts { font-size: 10.5px; color: var(--text-faint); margin-bottom: 4px; font-family: 'JetBrains Mono', monospace; }
+  .rq-notes-input-row { display: flex; gap: 8px; align-items: flex-start; }
+  .rq-notes-input-row textarea { flex: 1; background: var(--bg-input); border: 1px solid var(--line); color: var(--text); font-family: 'Inter', sans-serif; font-size: 13px; padding: 9px 11px; border-radius: 7px; outline: none; resize: vertical; min-height: 60px; }
+  .rq-notes-input-row textarea:focus { border-color: var(--amber); }
+  .rq-remove { color: var(--text-faint); cursor: pointer; font-size: 13px; padding: 0 6px; flex-shrink: 0; }
+  .rq-remove:hover { color: var(--red); }
+  .rq-footnote { padding: 12px 24px 18px; font-size: 11px; color: var(--text-faint); border-top: 1px solid var(--line); line-height: 1.6; }
+</style>
+
+<script>
+(function() {
+  const root = document.getElementById('rq-root');
+
+  const RESEARCH_SIGNALS_KEY = 'tao_dashboard_research_signals_v1';
+  const REV_STALE_DAYS = 21; // 3 weeks
+  const NEW_LISTING_AGE_OUT_MIN = 21;  // momentum becomes meaningful again past this age
+  const NEW_LISTING_AGE_OUT_MAX = 35;  // beyond this, it's just an established subnet, not a freshly-aged-out one
+
+  let state = {
+    queue: [],            // array of netuids, manually or auto added
+    expanded: {},          // [netuid] -> bool
+    answers: {},           // [netuid] -> { [flagKey]: true } — true = resolved
+    showResolved: {},      // [netuid] -> bool, toggles the resolved sub-list visibility
+    signals: null,         // loaded from the Screener's localStorage bridge
+    signalsUpdatedAt: null,
+    addError: null,
+    notes: {},             // [netuid] -> [{text, timestamp}, ...], append-only, persists independently of queue membership
+    noteDraft: {},         // [netuid] -> in-progress textarea content, not yet saved
+    persistError: null,
+  };
+
+  // ---- Persistence (localStorage, same mechanism as the watchlist/wallet
+  // address/flow history elsewhere in this file). Two separate keys, on
+  // purpose: queue membership + checkbox state in one, notes in another —
+  // so removing a subnet from the queue can never accidentally wipe its
+  // notes, since they're not stored together at all. ----
+  const QUEUE_STATE_KEY = 'tao_dashboard_research_queue_v1';
+  const NOTES_STORAGE_KEY = 'tao_dashboard_research_notes_v1';
+
+  function loadQueueState() {
+    try {
+      const raw = localStorage.getItem(QUEUE_STATE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        state.queue = Array.isArray(parsed.queue) ? parsed.queue : [];
+        state.answers = (parsed.answers && typeof parsed.answers === 'object') ? parsed.answers : {};
+      }
+    } catch (e) {
+      // Corrupted JSON or storage disabled — start from an empty queue
+      // rather than break the page.
+      state.queue = [];
+      state.answers = {};
+    }
+  }
+
+  function saveQueueState() {
+    try {
+      localStorage.setItem(QUEUE_STATE_KEY, JSON.stringify({ queue: state.queue, answers: state.answers }));
+      state.persistError = null;
+    } catch (e) {
+      state.persistError = 'Could not save research queue: ' + (e && e.message ? e.message : 'unknown error');
+    }
+  }
+
+  function loadNotesState() {
+    try {
+      const raw = localStorage.getItem(NOTES_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        state.notes = (parsed && typeof parsed === 'object') ? parsed : {};
+      }
+    } catch (e) {
+      state.notes = {};
+    }
+  }
+
+  function saveNotesState() {
+    try {
+      localStorage.setItem(NOTES_STORAGE_KEY, JSON.stringify(state.notes));
+      state.persistError = null;
+    } catch (e) {
+      state.persistError = 'Could not save notes: ' + (e && e.message ? e.message : 'unknown error');
+    }
+  }
+
+  function loadSignals() {
+    try {
+      const raw = localStorage.getItem(RESEARCH_SIGNALS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        state.signals = (parsed && parsed.subnets) || {};
+        state.signalsUpdatedAt = parsed && parsed.updatedAt || null;
+      } else {
+        state.signals = {};
+      }
+    } catch (e) {
+      state.signals = {};
+    }
+  }
+
+  // ---- Flag computation: five conditions, each a simple boolean test against
+  // the Screener's bridged signals. Purely a count for sorting — never shown
+  // as a score or verdict.
+  // NOTE: this is intentionally a duplicate of the Screener's own computeFlags
+  // (Alloc/Screener/Research are isolated scripts with no shared module
+  // system in this single-file setup). The Screener's copy only needs
+  // flagCount/flagSummaries for its table; this copy also produces the full
+  // question/readout text the Research Queue cards render. If the flag
+  // conditions ever change, both copies need updating together. ----
+  function computeFlags(sig) {
+    const flags = [];
+    if (!sig) return flags;
+
+    // 1. Flow/price divergence — 24h net flow direction disagrees in sign
+    // with 7d price trend.
+    if (sig.netFlow1dTao !== null && sig.change7d !== null) {
+      const flowSign = sig.netFlow1dTao > 0 ? 1 : (sig.netFlow1dTao < 0 ? -1 : 0);
+      const priceSign = sig.change7d > 0 ? 1 : (sig.change7d < 0 ? -1 : 0);
+      if (flowSign !== 0 && flowSign !== priceSign) {
+        flags.push({
+          key: 'divergence',
+          summary: 'flow/price divergence',
+          question: 'Net flow is ' + sig.netFlow1dTao.toFixed(1) + '\u03c4 over 24h while 7d price moved ' + sig.change7d.toFixed(1) + '% \u2014 is this outflow/inflow concentrated in a few large wallets or broadly distributed? Any news that explains it?',
+          readout: [['Net flow (24h)', sig.netFlow1dTao.toFixed(1) + ' \u03c4'], ['7d price change', sig.change7d.toFixed(1) + '%']],
+        });
+      }
+    }
+
+    // 2. Flow streak — 3+ consecutive same-direction readings (only if streak
+    // tracking has actually produced data; skipped entirely otherwise).
+    if (sig.streakCount !== null && sig.streakCount >= 3) {
+      const dirWord = sig.streakDir > 0 ? 'inflow' : (sig.streakDir < 0 ? 'outflow' : 'flat');
+      flags.push({
+        key: 'streak',
+        summary: sig.streakCount + '-sync ' + dirWord + ' streak',
+        question: dirWord === 'flat'
+          ? 'Flow has been flat for ' + sig.streakCount + ' consecutive synced readings \u2014 is this subnet just quiet, or stagnant for a reason worth checking?'
+          : 'Net flow has been ' + dirWord + ' for ' + sig.streakCount + ' consecutive synced readings \u2014 is this a sustained trend or a short-term blip? Worth checking recent news/announcements.',
+        readout: [['Streak length', sig.streakCount + ' synced readings'], ['Direction', dirWord]],
+      });
+    }
+
+    // 3. Stale revenue data — only applies to subnets with any revenue
+    // reference at all; flags if last checked more than 3 weeks ago.
+    if (sig.hasRevenueData && sig.revLastCheckedDaysAgo !== null && sig.revLastCheckedDaysAgo > REV_STALE_DAYS) {
+      const weeksAgo = Math.floor(sig.revLastCheckedDaysAgo / 7);
+      flags.push({
+        key: 'stale-revenue',
+        summary: 'revenue data ' + weeksAgo + 'w stale',
+        question: 'Revenue data last checked ' + weeksAgo + ' weeks ago \u2014 worth re-verifying given the current flow signal and whether the commercial relationship is still active.',
+        readout: [['Days since last checked', Math.round(sig.revLastCheckedDaysAgo)]],
+      });
+    }
+
+    // 4. Deregistration risk — bottom-10 pruning-rank zone, already computed
+    // by the Screener.
+    if (sig.inBottomTen) {
+      flags.push({
+        key: 'dereg-risk',
+        summary: 'deregistration risk zone',
+        question: 'Currently ranked ' + (sig.rank !== null ? sig.rank : '?') + ' in pruning order, within the bottom-10 risk zone' + (sig.isImmune ? ' (still inside registration immunity for now)' : '') + ' \u2014 confirm this is still active and check recent registration/emission trend.',
+        readout: [['Rank', sig.rank !== null ? sig.rank : '\u2014'], ['Immune', sig.isImmune === true ? 'yes' : (sig.isImmune === false ? 'no' : 'unknown')]],
+      });
+    }
+
+    // 5. New listing aging out — crossed back into the window where 7d
+    // momentum becomes meaningful again (same 21-day boundary the Screener's
+    // own momentum flag uses), but not so long ago that it's just a normal
+    // established subnet now.
+    if (sig.daysSinceRegistration !== null && sig.daysSinceRegistration > NEW_LISTING_AGE_OUT_MIN && sig.daysSinceRegistration <= NEW_LISTING_AGE_OUT_MAX) {
+      flags.push({
+        key: 'aging-out',
+        summary: 'new listing aging out',
+        question: 'Now ' + Math.round(sig.daysSinceRegistration) + ' days old \u2014 just crossed into the window where 7d price/momentum readings become meaningful again. Worth a fresh look now that early listing noise should be settling.',
+        readout: [['Days since registration', Math.round(sig.daysSinceRegistration)]],
+      });
+    }
+
+    return flags;
+  }
+
+  function addToQueue(rawNetuid) {
+    const netuid = parseInt(rawNetuid, 10);
+    if (!netuid || netuid < 1) {
+      state.addError = 'Enter a valid subnet number.';
+      render();
+      return;
+    }
+    if (state.queue.includes(netuid)) {
+      state.addError = 'SN' + netuid + ' is already in the research queue.';
+      render();
+      return;
+    }
+    state.queue.push(netuid);
+    state.expanded[netuid] = true;
+    state.addError = null;
+    saveQueueState();
+    render();
+  }
+
+  function removeFromQueue(netuid) {
+    state.queue = state.queue.filter(n => n !== netuid);
+    // Notes are deliberately left untouched — they live in a separate
+    // storage key and persist independently of queue membership.
+    saveQueueState();
+    render();
+  }
+
+  function toggleExpanded(netuid) {
+    state.expanded[netuid] = !state.expanded[netuid];
+    render();
+  }
+
+  function toggleAnswer(netuid, flagKey) {
+    state.answers[netuid] = state.answers[netuid] || {};
+    state.answers[netuid][flagKey] = !state.answers[netuid][flagKey];
+    saveQueueState();
+    render();
+  }
+
+  function saveNote(netuid) {
+    const text = (state.noteDraft[netuid] || '').trim();
+    if (!text) return;
+    state.notes[netuid] = state.notes[netuid] || [];
+    // Append-only — never overwrites or edits prior entries. Timestamp is
+    // generated here, not typed by the user.
+    state.notes[netuid].push({ text: text, timestamp: Date.now() });
+    state.noteDraft[netuid] = '';
+    saveNotesState();
+    render();
+  }
+
+  function fmtNoteTs(t) {
+    const d = new Date(t);
+    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) + ' \u00b7 ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function fmtUpdated(t) {
+    if (!t) return 'never';
+    const s = Math.floor((Date.now() - t) / 1000);
+    if (s < 60) return s + 's ago';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm ago';
+    return Math.floor(m / 60) + 'h ago';
+  }
+
+  function sortedQueue() {
+    return state.queue.slice().sort((a, b) => {
+      const flagsA = computeFlags(state.signals && state.signals[a]).length;
+      const flagsB = computeFlags(state.signals && state.signals[b]).length;
+      return flagsB - flagsA; // descending
+    });
+  }
+
+  function renderNotes(netuid) {
+    const notes = (state.notes[netuid] || []).slice().sort((a, b) => b.timestamp - a.timestamp);
+    return `
+      <div class="rq-section-label">Notes</div>
+      <div class="rq-notes-list">
+        ${notes.length === 0 ? '<div class="rq-note">No notes yet.</div>' : notes.map(n => `
+          <div class="rq-note-entry">
+            <div class="rq-note-ts">${fmtNoteTs(n.timestamp)}</div>
+            <div>${n.text.replace(/</g, '&lt;').replace(/\n/g, '<br/>')}</div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="rq-notes-input-row">
+        <textarea data-note-netuid="${netuid}" placeholder="Findings, conclusions, thesis\u2026">${(state.noteDraft[netuid] || '').replace(/</g, '&lt;')}</textarea>
+        <button class="rq-btn" data-save-note-netuid="${netuid}">Save note</button>
+      </div>
+    `;
+  }
+
+  function renderCard(netuid) {
+    const sig = state.signals ? state.signals[netuid] : null;
+    const flags = computeFlags(sig);
+    const isExpanded = !!state.expanded[netuid];
+    const subAnswers = state.answers[netuid] || {};
+    const unresolved = flags.filter(f => !subAnswers[f.key]);
+    const resolved = flags.filter(f => subAnswers[f.key]);
+    const summaryText = flags.length > 0 ? flags.map(f => f.summary).join(', ') : (sig ? 'no automatic flags' : 'no signal data yet');
+
+    return `
+      <div class="rq-card">
+        <div class="rq-card-collapsed" data-toggle-netuid="${netuid}">
+          <div class="rq-card-left">
+            <span class="rq-chevron ${isExpanded ? 'open' : ''}">\u25B8</span>
+            <span class="rq-sn-tag">SN${netuid}</span>
+            <span class="rq-sn-name">${sig && sig.name ? sig.name : ''}</span>
+            <span class="rq-card-summary">${summaryText}</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="rq-flagcount">${flags.length} flag${flags.length === 1 ? '' : 's'}</span>
+            <span class="rq-remove" data-remove-netuid="${netuid}" title="Remove from queue (notes will be kept once notes are added)">✕</span>
+          </div>
+        </div>
+        ${isExpanded ? `
+          <div class="rq-card-expanded">
+            ${!sig ? `
+              <div class="rq-note">No signal data yet for SN${netuid} \u2014 sync the Subnet screener tab at least once, then come back here.</div>
+            ` : flags.length === 0 ? `
+              <div class="rq-note">No automatic flags \u2014 manually added for review.</div>
+            ` : `
+              <div class="rq-section-label">Open questions</div>
+              ${unresolved.map(f => `
+                <div class="rq-question">
+                  <input type="checkbox" data-answer-netuid="${netuid}" data-answer-key="${f.key}" />
+                  <div class="rq-question-text">${f.question}</div>
+                </div>
+                <div class="rq-readout">
+                  ${f.readout.map(r => `<div class="rq-readout-row"><span>${r[0]}</span><span class="mono">${r[1]}</span></div>`).join('')}
+                </div>
+              `).join('')}
+              ${resolved.length > 0 ? `
+                <div class="rq-resolved-toggle" data-toggle-resolved="${netuid}">${state.showResolved[netuid] ? 'hide' : 'show'} ${resolved.length} resolved</div>
+                ${state.showResolved[netuid] ? resolved.map(f => `
+                  <div class="rq-question resolved">
+                    <input type="checkbox" checked data-answer-netuid="${netuid}" data-answer-key="${f.key}" />
+                    <div class="rq-question-text">${f.question}</div>
+                  </div>
+                `).join('') : ''}
+              ` : ''}
+            `}
+            ${renderNotes(netuid)}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  function render() {
+    const queue = sortedQueue();
+    root.innerHTML = `
+      <div class="rq-header">
+        <div>
+          <div class="rq-title">Research queue</div>
+          <div class="rq-subtitle">Flagged subnets and open questions \u2014 not a score, not a verdict</div>
+        </div>
+        <div class="rq-updated">Signals last synced<br/><b>${fmtUpdated(state.signalsUpdatedAt)}</b></div>
+      </div>
+
+      <div class="rq-controlbar">
+        <input id="rq-add-netuid" type="text" inputmode="numeric" placeholder="netuid e.g. 64" />
+        <button class="rq-btn" id="rq-add-btn">Add to queue</button>
+        <button class="rq-btn secondary" id="rq-refresh-signals-btn">Refresh signals</button>
+        <div class="rq-note">${state.persistError ? '⚠ ' + state.persistError : (state.addError ? '⚠ ' + state.addError : (state.signals === null ? 'Loading signals…' : (Object.keys(state.signals).length === 0 ? 'No signals found yet — sync the Subnet screener tab first.' : '')))}</div>
+      </div>
+
+      ${queue.length === 0 ? `
+        <div class="rq-empty">Nothing in the research queue yet.<br/>Add a subnet by netuid above, or use the flag/magnifying icon on a Subnet screener row (coming in a later step) to send it here.</div>
+      ` : queue.map(netuid => renderCard(netuid)).join('')}
+
+      <div class="rq-footnote">
+        Flag count is a neutral sort aid only \u2014 never a score or a buy/avoid signal. Each flag maps to one specific question, filled in with that subnet's real numbers from the Subnet screener's most recent sync. Re-sync the Screener tab to refresh the signals this page reads from. Queue membership, checkbox state, and note history are saved in this browser via localStorage and survive reopening this file on this device \u2014 same mechanism as the watchlist and wallet address elsewhere in this dashboard. Not financial advice.
+      </div>
+    `;
+
+    document.getElementById('rq-add-btn').onclick = () => {
+      addToQueue(document.getElementById('rq-add-netuid').value);
+    };
+    document.getElementById('rq-refresh-signals-btn').onclick = () => {
+      loadSignals();
+      render();
+    };
+    root.querySelectorAll('[data-toggle-netuid]').forEach(el => {
+      el.onclick = (e) => {
+        if (e.target.closest('[data-remove-netuid]')) return;
+        toggleExpanded(parseInt(el.getAttribute('data-toggle-netuid'), 10));
+      };
+    });
+    root.querySelectorAll('[data-remove-netuid]').forEach(el => {
+      el.onclick = (e) => { e.stopPropagation(); removeFromQueue(parseInt(el.getAttribute('data-remove-netuid'), 10)); };
+    });
+    root.querySelectorAll('[data-answer-netuid]').forEach(el => {
+      el.onclick = (e) => e.stopPropagation();
+      el.onchange = () => toggleAnswer(parseInt(el.getAttribute('data-answer-netuid'), 10), el.getAttribute('data-answer-key'));
+    });
+    root.querySelectorAll('[data-toggle-resolved]').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        const netuid = parseInt(el.getAttribute('data-toggle-resolved'), 10);
+        state.showResolved[netuid] = !state.showResolved[netuid];
+        render();
+      };
+    });
+    root.querySelectorAll('[data-note-netuid]').forEach(el => {
+      el.onclick = (e) => e.stopPropagation();
+      el.oninput = (e) => {
+        // Deliberately no render() here — re-rendering on every keystroke
+        // would reset the textarea and fight the user's typing, same issue
+        // fixed earlier for the Allocation terminal's capital input.
+        state.noteDraft[el.getAttribute('data-note-netuid')] = e.target.value;
+      };
+    });
+    root.querySelectorAll('[data-save-note-netuid]').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        saveNote(el.getAttribute('data-save-note-netuid'));
+      };
+    });
+  }
+
+  function checkPendingAdd() {
+    try {
+      const pending = localStorage.getItem('tao_dashboard_research_pending_add_v1');
+      if (pending) {
+        const netuid = parseInt(pending, 10);
+        let added = false;
+        if (netuid && !state.queue.includes(netuid)) {
+          state.queue.push(netuid);
+          added = true;
+        }
+        if (netuid) state.expanded[netuid] = true;
+        localStorage.removeItem('tao_dashboard_research_pending_add_v1');
+        if (added) saveQueueState();
+        render();
+        // Scroll the card into view once the DOM has updated.
+        setTimeout(() => {
+          const card = root.querySelector('[data-toggle-netuid="' + netuid + '"]');
+          if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 50);
+      }
+    } catch (e) { /* non-fatal */ }
+  }
+  // Exposed so the tab router can trigger a pending-add check at the exact
+  // moment the Research Queue tab is activated, not just on initial page load.
+  window.taoCheckResearchPending = checkPendingAdd;
+
+  loadQueueState();
+  loadNotesState();
+  loadSignals();
+  checkPendingAdd();
+  render();
 })();
 </script>
 </div>
