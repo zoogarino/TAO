@@ -1206,6 +1206,11 @@
   .scr-sn-tag { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim); background: var(--bg-input); padding: 2px 6px; border-radius: 4px; margin-right: 8px; }
   .scr-research-icon { color: var(--text-faint); cursor: pointer; font-size: 13px; padding: 0 4px; }
   .scr-research-icon:hover { color: var(--amber); }
+  .scr-fav-star { color: var(--text-faint); cursor: pointer; font-size: 14px; padding: 0 5px 0 0; }
+  .scr-fav-star:hover { color: var(--amber); }
+  .scr-fav-star.active { color: var(--amber); }
+  .scr-fav-sort { cursor: pointer; color: var(--text-faint); margin-right: 2px; }
+  .scr-fav-sort:hover { color: var(--amber); }
   .scr-flag { font-size: 9.5px; padding: 2px 6px; border-radius: 4px; margin-left: 6px; }
   .scr-flag.risk { background: rgba(199,84,80,0.15); color: var(--red); }
   .scr-flag.protected { background: rgba(200,137,59,0.15); color: var(--amber); }
@@ -1234,6 +1239,7 @@
     flowDataAvailable: false,
     viewMode: 'all', // 'all' | 'new'
     searchQuery: '',
+    favorites: [], // array of netuids, persisted independently of live subnet data
     newListingDays: 21,
     flowHistory: {},        // { [netuid]: [{t, f, l}, ...] } — raw snapshots only, hydrated from storage on load
     flowHistoryLoaded: false,
@@ -1253,6 +1259,41 @@
   const FLOW_HISTORY_KEY = 'tao_dashboard_flow_history_v1';
   const FLOW_HISTORY_MAX_DAYS = 180;
   const FLOW_HISTORY_MAX_ENTRIES = 2000;
+
+  // ---- Favorites (localStorage, own key) ----
+  // Deliberately independent of state.subnets (the live, API-populated
+  // array) — favoriting a subnet must survive a future sync returning
+  // fewer/different subnets, an API failure, or just closing the tab. Same
+  // reasoning as why Research Queue notes outlive queue membership.
+  const FAVORITES_KEY = 'tao_dashboard_screener_favorites_v1';
+
+  function loadFavorites() {
+    try {
+      const raw = localStorage.getItem(FAVORITES_KEY);
+      state.favorites = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(state.favorites)) state.favorites = [];
+    } catch (e) {
+      state.favorites = [];
+    }
+  }
+
+  function saveFavorites() {
+    try {
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify(state.favorites));
+    } catch (e) {
+      // Non-fatal — favorite will just not persist this time.
+    }
+  }
+
+  function toggleFavorite(netuid) {
+    if (state.favorites.includes(netuid)) {
+      state.favorites = state.favorites.filter(n => n !== netuid);
+    } else {
+      state.favorites.push(netuid);
+    }
+    saveFavorites();
+    render();
+  }
 
   async function loadFlowHistory() {
     // Uses localStorage, not window.storage — window.storage only exists
@@ -1812,6 +1853,7 @@
       const flags = computeFlags(sig);
       s.flagCount = flags.length;
       s.flagSummaries = flags.map(f => f.summary);
+      s.isFavorite = state.favorites.includes(s.netuid) ? 1 : 0; // numeric for sort consistency with other columns
     });
 
     const list = sortedSubnets();
@@ -1862,7 +1904,7 @@
           ${state.viewMode === 'new' ? `
             <thead>
               <tr>
-                <th data-sort="name">Subnet</th>
+                <th><span class="scr-fav-sort" data-sort="isFavorite" title="Sort by favorites">\u2605</span> Subnet${sortArrow('name')}</th>
                 <th class="num" data-sort="daysSinceRegistration">Age (days) ${sortArrow('daysSinceRegistration')}</th>
                 <th class="num" data-sort="priceUsd">Price ${sortArrow('priceUsd')}</th>
                 <th class="num" data-sort="marketCapUsd">Mkt cap ${sortArrow('marketCapUsd')}</th>
@@ -1886,7 +1928,7 @@
                   const flagCount = s.flagCount || 0;
                   return `
                     <tr>
-                      <td><span class="scr-sn-tag">SN${s.netuid}</span>${s.name}</td>
+                      <td><span class="scr-fav-star ${s.isFavorite ? 'active' : ''}" data-fav-netuid="${s.netuid}" title="${s.isFavorite ? 'Remove from favorites' : 'Add to favorites'}">${s.isFavorite ? '\u2605' : '\u2606'}</span><span class="scr-sn-tag">SN${s.netuid}</span>${s.name}</td>
                       <td class="num mono">${s.daysSinceRegistration !== null ? s.daysSinceRegistration.toFixed(1) : '—'}</td>
                       <td class="num mono">${s.priceUsd !== null ? '$' + s.priceUsd.toFixed(2) : '—'}</td>
                       <td class="num mono">${fmtCompactUsd(s.marketCapUsd)}</td>
@@ -1905,7 +1947,7 @@
           ` : `
             <thead>
               <tr>
-                <th data-sort="name">Subnet</th>
+                <th><span class="scr-fav-sort" data-sort="isFavorite" title="Sort by favorites">\u2605</span> Subnet${sortArrow('name')}</th>
                 <th class="num" data-sort="priceUsd">Price ${sortArrow('priceUsd')}</th>
                 <th class="num" data-sort="marketCapUsd">Mkt cap ${sortArrow('marketCapUsd')}</th>
                 <th class="num" data-sort="liquidityUsd">Liquidity ${sortArrow('liquidityUsd')}</th>
@@ -1936,7 +1978,7 @@
                   const flagCount = s.flagCount || 0;
                   return `
                     <tr>
-                      <td><span class="scr-sn-tag">SN${s.netuid}</span>${s.name}${isRisk ? '<span class="scr-flag risk">deregistration risk</span>' : ''}${isProtected ? '<span class="scr-flag protected">bottom-ranked, immune</span>' : ''}${isHot ? '<span class="scr-flag hot">momentum</span>' : ''}</td>
+                      <td><span class="scr-fav-star ${s.isFavorite ? 'active' : ''}" data-fav-netuid="${s.netuid}" title="${s.isFavorite ? 'Remove from favorites' : 'Add to favorites'}">${s.isFavorite ? '\u2605' : '\u2606'}</span><span class="scr-sn-tag">SN${s.netuid}</span>${s.name}${isRisk ? '<span class="scr-flag risk">deregistration risk</span>' : ''}${isProtected ? '<span class="scr-flag protected">bottom-ranked, immune</span>' : ''}${isHot ? '<span class="scr-flag hot">momentum</span>' : ''}</td>
                       <td class="num mono">${s.priceUsd !== null ? '$' + s.priceUsd.toFixed(2) : '—'}</td>
                       <td class="num mono">${fmtCompactUsd(s.marketCapUsd)}</td>
                       <td class="num mono">${fmtCompactUsd(s.liquidityUsd)}</td>
@@ -2001,6 +2043,12 @@
     root.querySelectorAll('th[data-sort]').forEach(th => {
       th.onclick = () => setSort(th.getAttribute('data-sort'));
     });
+    root.querySelectorAll('.scr-fav-sort[data-sort]').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation(); // avoid double-triggering if the parent th also has a sort handler
+        setSort(el.getAttribute('data-sort'));
+      };
+    });
     root.querySelectorAll('[data-research-netuid]').forEach(el => {
       el.onclick = (e) => {
         e.stopPropagation();
@@ -2013,10 +2061,17 @@
         if (typeof window.taoShowPane === 'function') window.taoShowPane('research');
       };
     });
+    root.querySelectorAll('[data-fav-netuid]').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        toggleFavorite(parseInt(el.getAttribute('data-fav-netuid'), 10));
+      };
+    });
     const exportBtn = document.getElementById('scr-export-flow-btn');
     if (exportBtn) exportBtn.onclick = () => exportFlowHistory();
   }
 
+  loadFavorites();
   render();
   loadFlowHistory().then(() => render());
 })();
