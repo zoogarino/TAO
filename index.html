@@ -553,11 +553,36 @@
       } else {
         state.walletHoldings = rows.map(r => ({
           netuid: r.netuid,
-          hotkeyName: r.hotkey_name || null,
+          hotkeyName: r.hotkey_name || null, // this is the VALIDATOR's name (e.g. "Taostats"), not the subnet's — kept separately, never shown as the subnet name
+          subnetName: null, // filled in below from the pool endpoint
           alphaBalance: r.balance !== undefined ? parseFloat(r.balance) / 1e9 : null,
           balanceAsTao: r.balance_as_tao !== undefined ? parseFloat(r.balance_as_tao) / 1e9 : null,
         }));
         state.rawDebug.wallet = { sample: rows.slice(0, 2), total_rows: rows.length };
+
+        // Enrich with real subnet names. hotkey_name on the stake_balance
+        // endpoint is the validator's name, not the subnet's — using it as
+        // the subnet label was a real bug (every row showed the validator
+        // you're staked through, e.g. "Taostats", instead of the subnet).
+        // One call per unique held netuid; capped so a wallet with many
+        // positions can't blow the free tier's rate limit in one lookup.
+        const uniqueNetuids = [...new Set(state.walletHoldings.map(h => h.netuid))].slice(0, 10);
+        const nameResults = await Promise.allSettled(
+          uniqueNetuids.map(netuid => fetchTaoStats('/api/dtao/pool/latest/v1?netuid=' + netuid))
+        );
+        const nameByNetuid = {};
+        nameResults.forEach((r, i) => {
+          if (r.status === 'fulfilled') {
+            const row = (r.value && r.value.data && r.value.data[0]) || null;
+            if (row && row.name) nameByNetuid[uniqueNetuids[i]] = row.name;
+          }
+        });
+        state.walletHoldings.forEach(h => {
+          h.subnetName = nameByNetuid[h.netuid] || null;
+        });
+        if (uniqueNetuids.length < new Set(state.walletHoldings.map(h => h.netuid)).size) {
+          state.rawDebug.walletNamesTruncated = true;
+        }
       }
     } catch (e) {
       state.walletError = e.message || 'Could not look up this address.';
@@ -813,7 +838,10 @@
               ` : ''}
               ${(state.walletHoldings || []).map(h => `
                 <tr>
-                  <td><span class="tao-sn-tag">SN${h.netuid}</span>${h.hotkeyName || ('SN' + h.netuid)}</td>
+                  <td>
+                    <span class="tao-sn-tag">SN${h.netuid}</span>${h.subnetName || ('SN' + h.netuid)}
+                    ${h.hotkeyName ? `<div class="tao-rev-meta" style="margin-left:2px;">via ${h.hotkeyName}</div>` : ''}
+                  </td>
                   <td class="num mono">${h.alphaBalance !== null ? h.alphaBalance.toFixed(4) : '—'}</td>
                   <td class="num mono">${h.balanceAsTao !== null ? h.balanceAsTao.toFixed(4) + ' \u03c4' : '—'}</td>
                   <td class="num mono">${(h.balanceAsTao !== null && state.taoPrice) ? fmtUsd(h.balanceAsTao * state.taoPrice, 2) : '—'}</td>
@@ -828,6 +856,7 @@
             </tbody>
           </table>
           ${state.walletFreeTao === null ? '<div class="tao-keynote" style="padding:8px 0 4px;">Free (unstaked) TAO balance could not be loaded this lookup (the endpoint is confirmed correct, so this is most likely a transient taostats server issue) \u2014 the total above only reflects staked Alpha positions. Try syncing again, or check "show raw response" for details.</div>' : ''}
+          ${state.rawDebug && state.rawDebug.walletNamesTruncated ? '<div class="tao-keynote" style="padding:8px 0 4px;">Subnet name lookup is capped at 10 unique positions per wallet lookup to stay within the free taostats rate limit \u2014 remaining positions show as "SN&lt;number&gt;" instead of a name.</div>' : ''}
         </div>
       ` : ''}
 
