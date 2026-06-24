@@ -1273,6 +1273,8 @@
     flowHistory: {},        // { [netuid]: [{t, f, l}, ...] } — raw snapshots only, hydrated from storage on load
     flowHistoryLoaded: false,
     flowHistoryError: null, // last storage read/write error, if any — shown, not hidden
+    accumulation: {},       // [netuid] -> full accumulation result (in-memory; compact copy mirrored to ACCUM_KEY for the Research Queue)
+    accumLoading: {},       // [netuid] -> bool while its on-demand history fetch is in flight
   };
 
   // ---- Flow history persistence (localStorage) ----
@@ -1609,6 +1611,218 @@
     });
     if (!res.ok) throw new Error('Request failed (' + res.status + ')');
     return res.json();
+  }
+
+  // ========================================================================
+  // Accumulation-pattern signal (on-demand, lazy-loaded per subnet)
+  // ------------------------------------------------------------------------
+  // Distinct from net-flow (direction) and momentum (magnitude): looks at
+  // SHAPE — age-adjusted root_prop trend + price drawdown/base + spike-vs-
+  // climb — to tell quiet multi-week accumulation from a one-off spike.
+  // Verified live against /api/dtao/pool/history/v1: per-day fields root_prop,
+  // price, liquidity, market_cap. The *_tao / market_cap / liquidity values
+  // are RAO strings -> /1e9; price is already TAO; liquidity != liquidity_raw
+  // (the latter is the Uniswap-V3 L constant, NOT a tao amount). Results are
+  // written to ACCUM_KEY for the (keyless) Research Queue to read — same
+  // bridge pattern as the signals key. NEVER run across all subnets on a sync.
+  // ========================================================================
+  const ACCUM_KEY = 'tao_dashboard_accumulation_v1';
+  const ACCUM_HISTORY_MAX_DAYS = 730;      // ~24 month cap on the root_prop window
+  const ACCUM_SHAPE_WINDOW_DAYS = 180;     // drawdown / spike-vs-climb window
+  const ACCUM_MIN_DAYS_FOR_SHAPE = 30;     // below this, B/C report "insufficient history"
+  const ACCUM_PAGE_SIZE = 200;             // history rows per page
+  const ACCUM_MAX_PAGES = 6;               // hard cap on calls per check (rate-limit guard)
+  // Signal A — age-adjusted root_prop. root_prop decays mechanically as alpha
+  // is emitted, so absolute drops conflate subnet age with real demand; we
+  // flag only when the RECENT decline outpaces the subnet's OWN earlier
+  // baseline rate. Young subnets have no baseline yet -> fall back to an
+  // absolute drop, clearly labelled as not age-adjusted.
+  const ACCUM_RP_RECENT_DAYS = 45;
+  const ACCUM_RP_ACCEL_RATIO = 1.5;        // recent rate must exceed baseline rate by this factor
+  const ACCUM_RP_MIN_RECENT_DROP_PP = 0.02;// absolute floor so noise on a flat series can't fire
+  const ACCUM_RP_YOUNG_DROP_PP = 0.15;     // young-subnet fallback: absolute drop threshold
+  const ACCUM_RP_YOUNG_MAX_AGE_DAYS = 75;  // "young" = still inside the steep mechanical-decay zone
+  const ACCUM_RP_BASELINE_MIN_DAYS = 30;   // need this much pre-recent history to age-adjust
+  const ACCUM_DRAWDOWN_MIN_PCT = 0.20;     // Signal B
+  const ACCUM_DRAWDOWN_SHALLOW_PCT = 0.10;
+  const ACCUM_BASE_MIN_DAYS_SINCE_LOW = 10;
+  const ACCUM_SPIKE_RECENT_DAYS = 2;       // Signal C
+  const ACCUM_SPIKE_TRAILING_DAYS = 10;
+  const ACCUM_SPIKE_SHARE_THRESHOLD = 0.60;
+  const ACCUM_LIQ_THIN_TAO = 500;          // Signal E (additive caveat; never changes the label)
+  const ACCUM_LIQ_MID_TAO = 2000;
+  const ACCUM_DAY_MS = 86400000;
+
+  function accumRaoToTao(v) { return (v === null || v === undefined) ? null : Number(v) / 1e9; }
+  function accumNormalize(rows) {
+    const out = [];
+    for (const r of rows) {
+      const t = Date.parse(r.timestamp);
+      const price = r.price != null ? Number(r.price) : null;
+      if (isNaN(t) || price === null || isNaN(price)) continue;
+      const rp = r.root_prop != null ? Number(r.root_prop) : null;
+      out.push({ t: t, rootProp: (rp != null && !isNaN(rp)) ? rp : null, price: price,
+        liqTao: accumRaoToTao(r.liquidity), mcapTao: accumRaoToTao(r.market_cap),
+        enabledUserLiq: !!r.enabled_user_liquidity, userTao: accumRaoToTao(r.user_provided_tao) });
+    }
+    out.sort((a, b) => a.t - b.t);
+    return out;
+  }
+  function accumNearest(rows, tTarget) {
+    return rows.reduce((best, r) => Math.abs(r.t - tTarget) < Math.abs(best.t - tTarget) ? r : best, rows[0]);
+  }
+  function accumSignalA(rows, ageDays) {
+    const rp = rows.filter(r => r.rootProp !== null);
+    if (rp.length < 2) return { fired: false, mode: null, note: 'no root_prop history', startRp: null, nowRp: null, absDropPp: null, recentRate: null, baselineRate: null };
+    const start = rp[0], now = rp[rp.length - 1];
+    const absDrop = start.rootProp - now.rootProp;
+    const recentCut = now.t - ACCUM_RP_RECENT_DAYS * ACCUM_DAY_MS;
+    const recent = rp.filter(r => r.t >= recentCut);
+    const baseline = rp.filter(r => r.t < recentCut);
+    const rate = arr => {
+      if (arr.length < 2) return null;
+      const span = (arr[arr.length - 1].t - arr[0].t) / ACCUM_DAY_MS;
+      if (span <= 0) return null;
+      return (arr[0].rootProp - arr[arr.length - 1].rootProp) / span;
+    };
+    const recentRate = rate(recent), baselineRate = rate(baseline);
+    const recentDrop = recent.length >= 2 ? (recent[0].rootProp - recent[recent.length - 1].rootProp) : 0;
+    const baselineSpan = baseline.length >= 2 ? (baseline[baseline.length - 1].t - baseline[0].t) / ACCUM_DAY_MS : 0;
+    const insufficientBaseline = baselineSpan < ACCUM_RP_BASELINE_MIN_DAYS;
+    const isYoungAge = (ageDays != null && ageDays <= ACCUM_RP_YOUNG_MAX_AGE_DAYS);
+    let fired = false, mode = null, note = '';
+    if (isYoungAge || insufficientBaseline) {
+      fired = absDrop >= ACCUM_RP_YOUNG_DROP_PP;
+      mode = isYoungAge ? 'absolute (young subnet)' : 'absolute (short history)';
+      note = fired
+        ? 'root_prop fell ' + (absDrop * 100).toFixed(1) + 'pp \u2014 ' + mode + ', not age-adjusted'
+        : 'root_prop drop ' + (absDrop * 100).toFixed(1) + 'pp under ' + (ACCUM_RP_YOUNG_DROP_PP * 100) + 'pp threshold (' + mode + ')';
+    } else {
+      const accel = (recentRate != null && baselineRate != null && baselineRate > 0) ? recentRate / baselineRate : null;
+      fired = recentRate != null && baselineRate != null && recentRate > baselineRate * ACCUM_RP_ACCEL_RATIO && recentDrop >= ACCUM_RP_MIN_RECENT_DROP_PP;
+      mode = 'age-adjusted';
+      note = fired
+        ? 'decline accelerating: recent ' + (recentRate * 100).toFixed(3) + 'pp/day vs own baseline ' + (baselineRate * 100).toFixed(3) + 'pp/day (\u00d7' + (accel ? accel.toFixed(2) : '\u2014') + ')'
+        : 'no acceleration vs own baseline (recent ' + (recentRate != null ? (recentRate * 100).toFixed(3) : '\u2014') + ' vs ' + (baselineRate != null ? (baselineRate * 100).toFixed(3) : '\u2014') + ' pp/day)';
+    }
+    return { fired: fired, mode: mode, note: note, startRp: start.rootProp, nowRp: now.rootProp, absDropPp: absDrop * 100, recentRate: recentRate, baselineRate: baselineRate };
+  }
+  function accumSignalB(rows) {
+    const now = rows[rows.length - 1].t;
+    const slice = rows.filter(r => r.t >= now - ACCUM_SHAPE_WINDOW_DAYS * ACCUM_DAY_MS);
+    const span = slice.length >= 2 ? (slice[slice.length - 1].t - slice[0].t) / ACCUM_DAY_MS : 0;
+    if (span < ACCUM_MIN_DAYS_FOR_SHAPE) return { available: false, note: 'only ' + Math.round(span) + 'd of history' };
+    const startPrice = slice[0].price;
+    let low = slice[0];
+    for (const r of slice) if (r.price < low.price) low = r;
+    const drawdownPct = (startPrice - low.price) / startPrice;
+    const daysSinceLow = (now - low.t) / ACCUM_DAY_MS;
+    const isBase = drawdownPct >= ACCUM_DRAWDOWN_MIN_PCT && daysSinceLow >= ACCUM_BASE_MIN_DAYS_SINCE_LOW;
+    const isShallow = drawdownPct < ACCUM_DRAWDOWN_SHALLOW_PCT;
+    return { available: true, isBase: isBase, isShallow: isShallow, drawdownPct: drawdownPct * 100, daysSinceLow: Math.round(daysSinceLow) };
+  }
+  function accumSignalC(rows) {
+    const now = rows[rows.length - 1].t;
+    const slice = rows.filter(r => r.t >= now - ACCUM_SHAPE_WINDOW_DAYS * ACCUM_DAY_MS);
+    const span = slice.length >= 2 ? (slice[slice.length - 1].t - slice[0].t) / ACCUM_DAY_MS : 0;
+    if (span < ACCUM_SPIKE_TRAILING_DAYS) return { available: false, note: 'only ' + Math.round(span) + 'd of history' };
+    const last = slice[slice.length - 1].price;
+    const pRecent = accumNearest(slice, now - ACCUM_SPIKE_RECENT_DAYS * ACCUM_DAY_MS).price;
+    const pTrailing = accumNearest(slice, now - ACCUM_SPIKE_TRAILING_DAYS * ACCUM_DAY_MS).price;
+    const trailingGain = last - pTrailing;
+    if (trailingGain <= 0) return { available: true, shape: 'no recent gain', shareFromRecent: null };
+    const shareFromRecent = (last - pRecent) / trailingGain;
+    return { available: true, shape: shareFromRecent >= ACCUM_SPIKE_SHARE_THRESHOLD ? 'spike' : 'gradual', shareFromRecent: shareFromRecent * 100 };
+  }
+  function accumSignalE(rows) {
+    const liq = rows[rows.length - 1].liqTao;
+    let tier = 'ok', caveat = null;
+    if (liq != null && liq < ACCUM_LIQ_THIN_TAO) { tier = 'thin'; caveat = 'thin liquidity (\u03c4' + Math.round(liq) + ') \u2014 pattern can be produced by a single wallet, weight accordingly'; }
+    else if (liq != null && liq < ACCUM_LIQ_MID_TAO) { tier = 'moderate'; caveat = 'moderate liquidity (\u03c4' + Math.round(liq) + ')'; }
+    return { liqTao: liq, tier: tier, caveat: caveat };
+  }
+  function computeAccumulationSignal(rawRows, ageDays) {
+    const rows = accumNormalize(rawRows || []);
+    if (rows.length < 2) return { label: 'No data', parts: { A: null, B: null, C: null, E: null }, dataNote: 'history returned too few rows', checkedAt: Date.now() };
+    const A = accumSignalA(rows, ageDays), B = accumSignalB(rows), C = accumSignalC(rows), E = accumSignalE(rows);
+    const totalSpan = (rows[rows.length - 1].t - rows[0].t) / ACCUM_DAY_MS;
+    let label;
+    if (!A.fired) label = 'None';
+    else {
+      const supports = ((B.available && B.isBase) ? 1 : 0) + ((C.available && C.shape === 'gradual') ? 1 : 0);
+      label = supports === 2 ? 'Strong' : 'Possible';
+    }
+    const dataNote = totalSpan < ACCUM_SHAPE_WINDOW_DAYS ? ('only ' + Math.round(totalSpan) + 'd of history \u2014 shape checks ' + (B.available ? 'partial' : 'unavailable')) : null;
+    return { label: label, parts: { A: A, B: B, C: C, E: E }, dataNote: dataNote, checkedAt: Date.now() };
+  }
+  async function fetchPoolHistory(netuid) {
+    let all = [], page = 1;
+    while (page <= ACCUM_MAX_PAGES) {
+      const resp = await fetchTaoStats('/api/dtao/pool/history/v1?netuid=' + netuid + '&frequency=by_day&limit=' + ACCUM_PAGE_SIZE + '&page=' + page);
+      const data = (resp && Array.isArray(resp.data)) ? resp.data : [];
+      all = all.concat(data);
+      const pg = resp && resp.pagination;
+      if (!pg || !pg.next_page || all.length >= ACCUM_HISTORY_MAX_DAYS) break;
+      page = pg.next_page;
+    }
+    return all;
+  }
+  function saveAccumulationResult(netuid, result) {
+    try {
+      const raw = localStorage.getItem(ACCUM_KEY);
+      const all = raw ? JSON.parse(raw) : {};
+      const p = result.parts || {}, A = p.A, B = p.B, C = p.C, E = p.E;
+      all[String(netuid)] = {
+        label: result.label, checkedAt: result.checkedAt || Date.now(), dataNote: result.dataNote || null,
+        a: A ? { fired: A.fired, mode: A.mode, note: A.note, startRp: A.startRp, nowRp: A.nowRp, absDropPp: A.absDropPp } : null,
+        b: B || null, c: C || null, e: E || null,
+      };
+      localStorage.setItem(ACCUM_KEY, JSON.stringify(all));
+    } catch (e) { /* non-fatal — Research Queue just shows "not checked yet" */ }
+  }
+  async function runAccumulationCheck(netuid) {
+    if (!state.apiKey) {
+      state.accumulation[netuid] = { label: 'No data', parts: { A: null, B: null, C: null, E: null }, dataNote: 'add your API key and sync first' };
+      render(); return;
+    }
+    state.accumLoading[netuid] = true;
+    render();
+    try {
+      const rows = await fetchPoolHistory(netuid);
+      const sub = state.subnets.find(s => s.netuid === netuid);
+      const ageDays = sub && sub.daysSinceRegistration != null ? sub.daysSinceRegistration : null;
+      const result = computeAccumulationSignal(rows, ageDays);
+      state.accumulation[netuid] = result;
+      saveAccumulationResult(netuid, result);
+    } catch (e) {
+      state.accumulation[netuid] = { label: 'No data', parts: { A: null, B: null, C: null, E: null }, dataNote: (e && e.message) ? e.message : 'history call failed' };
+    } finally {
+      delete state.accumLoading[netuid];
+      render();
+    }
+  }
+  function accumPillColor(label) {
+    if (label === 'Strong') return 'var(--teal)';
+    if (label === 'Possible') return '#d8a23a';
+    return 'var(--text-dim)';
+  }
+  function buildAccumTitle(r) {
+    const p = r.parts || {}, A = p.A, B = p.B, C = p.C, E = p.E;
+    const lines = ['Accumulation: ' + r.label];
+    if (A) lines.push('\u2022 root_prop ' + (A.startRp != null ? A.startRp.toFixed(3) : '\u2014') + ' \u2192 ' + (A.nowRp != null ? A.nowRp.toFixed(3) : '\u2014') + ' (' + (A.absDropPp != null ? A.absDropPp.toFixed(1) : '\u2014') + 'pp); ' + (A.note || ''));
+    if (B) lines.push(B.available ? '\u2022 drawdown ' + B.drawdownPct.toFixed(0) + '% from window start, ' + B.daysSinceLow + 'd since low' + (B.isBase ? ' (base confirmed)' : (B.isShallow ? ' (shallow \u2014 drift, not a base)' : ' (no base)')) : '\u2022 base check: ' + B.note);
+    if (C) lines.push(C.available ? '\u2022 move shape: ' + C.shape + (C.shareFromRecent != null ? ' (' + C.shareFromRecent.toFixed(0) + '% of trailing-week gain in last ' + ACCUM_SPIKE_RECENT_DAYS + 'd)' : '') : '\u2022 move shape: ' + C.note);
+    if (E) lines.push('\u2022 liquidity \u03c4' + (E.liqTao != null ? Math.round(E.liqTao) : '\u2014') + (E.caveat ? ' \u2014 \u26a0 ' + E.caveat : ''));
+    if (r.dataNote) lines.push('\u26a0 ' + r.dataNote);
+    return lines.join('\n').replace(/"/g, '&quot;');
+  }
+  function accumCell(netuid) {
+    if (state.accumLoading[netuid]) return '<span class="scr-accum" style="color:var(--text-dim);font-size:11px;">checking\u2026</span> ';
+    const r = state.accumulation[netuid];
+    if (!r) return '<span class="scr-accum" data-accum-netuid="' + netuid + '" title="Check accumulation pattern (on-demand \u2014 fetches daily history)" style="cursor:pointer;color:var(--text-dim);font-size:11px;border:1px dashed var(--text-dim);border-radius:4px;padding:1px 5px;">accum?</span> ';
+    const color = accumPillColor(r.label);
+    const warn = (r.parts && r.parts.E && r.parts.E.caveat) ? ' \u26a0' : '';
+    return '<span class="scr-accum" data-accum-netuid="' + netuid + '" title="' + buildAccumTitle(r) + '" style="cursor:pointer;color:' + color + ';font-size:11px;border:1px solid ' + color + ';border-radius:4px;padding:1px 5px;">' + r.label + warn + '</span> ';
   }
 
   const IMMUNITY_DAYS = 122; // ~4 months
@@ -1967,7 +2181,7 @@
                       <td class="num mono" style="color:${streak.color}" title="${(streak.title || '').replace(/"/g, '&quot;')}">${streak.label}</td>
                       <td class="num mono" ${deltaClass24}>${fmtPct(s.change24h)}</td>
                       <td class="num mono" style="color:var(--text-dim);" title="${(s.flagSummaries || []).join(', ').replace(/"/g, '&quot;')}">${flagCount > 0 ? flagCount : '\u2014'}</td>
-                      <td class="num"><span class="scr-research-icon" data-research-netuid="${s.netuid}" title="Add SN${s.netuid} to Research Queue">\u2691</span></td>
+                      <td class="num">${accumCell(s.netuid)}<span class="scr-research-icon" data-research-netuid="${s.netuid}" title="Add SN${s.netuid} to Research Queue">\u2691</span></td>
                     </tr>
                   `;
                 }).join('')
@@ -2018,7 +2232,7 @@
                       <td class="num mono">${fmtRatio(s.buySellRatio)}</td>
                       <td class="num mono">${s.rank !== null ? s.rank : '—'}</td>
                       <td class="num mono" style="color:var(--text-dim);" title="${(s.flagSummaries || []).join(', ').replace(/"/g, '&quot;')}">${flagCount > 0 ? flagCount : '\u2014'}</td>
-                      <td class="num"><span class="scr-research-icon" data-research-netuid="${s.netuid}" title="Add SN${s.netuid} to Research Queue">\u2691</span></td>
+                      <td class="num">${accumCell(s.netuid)}<span class="scr-research-icon" data-research-netuid="${s.netuid}" title="Add SN${s.netuid} to Research Queue">\u2691</span></td>
                     </tr>
                   `;
                 }).join('')
@@ -2088,6 +2302,12 @@
         // Reuse the same tab-switching function the tab bar itself uses,
         // rather than introducing a second navigation mechanism.
         if (typeof window.taoShowPane === 'function') window.taoShowPane('research');
+      };
+    });
+    root.querySelectorAll('[data-accum-netuid]').forEach(el => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        runAccumulationCheck(parseInt(el.getAttribute('data-accum-netuid'), 10));
       };
     });
     root.querySelectorAll('[data-fav-netuid]').forEach(el => {
@@ -2195,6 +2415,7 @@
     addError: null,
     notes: {},             // [netuid] -> [{text, timestamp}, ...], append-only, persists independently of queue membership
     noteDraft: {},         // [netuid] -> in-progress textarea content, not yet saved
+    accum: {},             // [netuid] -> compact accumulation result read from the Screener's ACCUM_KEY bridge
     persistError: null,
   };
 
@@ -2250,6 +2471,17 @@
     } catch (e) {
       state.persistError = 'Could not save notes: ' + (e && e.message ? e.message : 'unknown error');
     }
+  }
+
+  const ACCUM_KEY = 'tao_dashboard_accumulation_v1';
+  function loadAccum() {
+    // Read-only consumer of the Screener's on-demand accumulation results,
+    // same isolation pattern as the signals bridge — this tab has no API key
+    // and never fetches; it only reflects what the Screener has computed.
+    try {
+      const raw = localStorage.getItem(ACCUM_KEY);
+      state.accum = raw ? JSON.parse(raw) : {};
+    } catch (e) { state.accum = {}; }
   }
 
   function loadSignals() {
@@ -2440,6 +2672,35 @@
     `;
   }
 
+  function renderAccumBlock(netuid) {
+    const r = state.accum ? state.accum[String(netuid)] : null;
+    if (!r) {
+      return '<div class="rq-section-label">Accumulation pattern</div>'
+        + '<div class="rq-note">Not checked yet \u2014 open SN' + netuid + ' in the Subnet screener and click its <b>accum?</b> button; the result is saved here automatically.</div>';
+    }
+    const qs = [];
+    if (r.label === 'Strong') {
+      qs.push('Shows multi-week organic accumulation (root_prop fell ' + (r.a && r.a.absDropPp != null ? r.a.absDropPp.toFixed(1) : '?') + 'pp, real drawdown+recovery, gradual move) \u2014 is there a fundamental thesis here, or is this pattern alone the only reason to be interested?');
+    }
+    if (r.a && r.a.fired && r.c && r.c.shape === 'spike') {
+      qs.push('Organic stake is rising but the latest move looks like a single fast jump, not a gradual climb \u2014 wait for confirmation that the gain holds, or is the root_prop trend enough on its own?');
+    }
+    if ((r.label === 'Strong' || r.label === 'Possible') && r.e && r.e.tier === 'thin') {
+      qs.push('Pattern looks real but liquidity is thin (\u03c4' + (r.e.liqTao != null ? Math.round(r.e.liqTao) : '?') + ') \u2014 could be early conviction buying or a single wallet. Worth a small starter position to track, or wait for liquidity to confirm broader participation?');
+    }
+    const readout = [];
+    if (r.a) readout.push(['root_prop start \u2192 now', (r.a.startRp != null ? r.a.startRp.toFixed(3) : '\u2014') + ' \u2192 ' + (r.a.nowRp != null ? r.a.nowRp.toFixed(3) : '\u2014') + ' (' + (r.a.absDropPp != null ? r.a.absDropPp.toFixed(1) : '\u2014') + 'pp); ' + (r.a.mode || '')]);
+    if (r.b && r.b.available) readout.push(['drawdown / days since low', r.b.drawdownPct.toFixed(0) + '% / ' + r.b.daysSinceLow + 'd' + (r.b.isBase ? ' (base)' : (r.b.isShallow ? ' (shallow)' : ''))]);
+    if (r.c && r.c.available && r.c.shareFromRecent != null) readout.push(['move shape', r.c.shape + ' (' + r.c.shareFromRecent.toFixed(0) + '% of week in last 2d)']);
+    if (r.e) readout.push(['liquidity', '\u03c4' + (r.e.liqTao != null ? Math.round(r.e.liqTao) : '\u2014') + (r.e.caveat ? ' \u2014 \u26a0 thin' : '')]);
+    const checked = r.checkedAt ? new Date(r.checkedAt).toLocaleString() : '';
+    return '<div class="rq-section-label">Accumulation pattern: ' + r.label + (r.dataNote ? ' \u00b7 \u26a0 ' + r.dataNote : '') + '</div>'
+      + qs.map(q => '<div class="rq-question"><div class="rq-question-text">' + q + '</div></div>').join('')
+      + (qs.length === 0 ? '<div class="rq-note">No accumulation question triggered at label "' + r.label + '".</div>' : '')
+      + '<div class="rq-readout">' + readout.map(x => '<div class="rq-readout-row"><span>' + x[0] + '</span><span class="mono">' + x[1] + '</span></div>').join('') + '</div>'
+      + '<div class="rq-note" style="margin-top:4px;">Checked ' + checked + ' \u00b7 re-run from the Screener to refresh.</div>';
+  }
+
   function renderCard(netuid) {
     const sig = state.signals ? state.signals[netuid] : null;
     const flags = computeFlags(sig);
@@ -2490,6 +2751,7 @@
                 `).join('') : ''}
               ` : ''}
             `}
+            ${renderAccumBlock(netuid)}
             ${renderNotes(netuid)}
           </div>
         ` : ''}
@@ -2498,6 +2760,7 @@
   }
 
   function render() {
+    loadAccum();
     const queue = sortedQueue();
     root.innerHTML = `
       <div class="rq-header">
